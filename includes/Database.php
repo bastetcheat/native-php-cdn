@@ -45,7 +45,9 @@ class Database
         $pdo->exec('PRAGMA busy_timeout = 5000');         // wait 5 s on lock instead of fail
         $pdo->exec('PRAGMA synchronous = NORMAL');        // safe with WAL, 3-5× faster
         $pdo->exec('PRAGMA cache_size = -4000');          // 4 MB page cache (negative = KB)
-        $pdo->exec('PRAGMA mmap_size = 134217728');       // 128 MB memory-mapped I/O
+        // NOTE: mmap_size is intentionally NOT set here.
+        // On Windows, memory-mapped files are held open by the OS even after PHP
+        // releases the PDO handle, which prevents deleting cdn.sqlite in Explorer.
         $pdo->exec('PRAGMA temp_store = MEMORY');         // temp tables in RAM
         $pdo->exec('PRAGMA foreign_keys = ON');
 
@@ -139,5 +141,20 @@ class Database
 
         // Mark schema as up to date
         $db->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
+
+        // Merge the WAL file back into the main database file now that schema
+        // is confirmed. TRUNCATE mode resets the WAL to near-zero size.
+        // This reduces the chance of Windows blocking cdn.sqlite deletion.
+        $db->exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    }
+
+    /**
+     * Force a WAL checkpoint. Call this before backups or when you want to
+     * be able to copy/delete cdn.sqlite from Windows Explorer.
+     * (Still need to stop Apache completely to fully release the file handle.)
+     */
+    public static function checkpoint(): void
+    {
+        self::getInstance()->exec('PRAGMA wal_checkpoint(TRUNCATE)');
     }
 }

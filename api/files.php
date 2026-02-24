@@ -184,10 +184,20 @@ switch (true) {
             // Delete from disk
             $path = $uploadsDir . '/' . $file['stored_name'];
             if (file_exists($path)) {
-                unlink($path);
+                if (!@unlink($path)) {
+                    // On Windows, a file being downloaded can't be deleted.
+                    // Report the error clearly rather than silently leaving an orphan.
+                    http_response_code(500);
+                    echo json_encode([
+                        'success' => false,
+                        'error' => 'Could not delete file from disk (it may be in use or permissions are missing). '
+                            . 'The database record was NOT removed – try again in a moment.',
+                    ]);
+                    exit;
+                }
             }
 
-            // Delete from DB
+            // Delete from DB only after disk deletion succeeds
             $del = $db->prepare("DELETE FROM files WHERE id = ?");
             $del->execute([$fileId]);
 
