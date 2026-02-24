@@ -6,6 +6,11 @@
 $db = Database::getInstance();
 $method = $_SERVER['REQUEST_METHOD'];
 
+// Bearer-token endpoint – no session data needed at all.
+// Release the session lock immediately so parallel browser requests aren't blocked
+// for the entire duration of a potentially large file upload.
+session_write_close();
+
 if ($method !== 'POST') {
     http_response_code(405);
     echo json_encode(['success' => false, 'error' => 'Method not allowed']);

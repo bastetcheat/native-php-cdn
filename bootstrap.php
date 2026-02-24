@@ -46,3 +46,17 @@ if (!is_dir($uploadsDir)) {
 // Run migrations – internally skips everything if schema is current.
 // Cost on warm runs: one PRAGMA user_version read (microseconds).
 Database::migrate();
+
+// ── Probabilistic housekeeping (runs ~1% of requests) ────────────────────────
+// Cleans up expired login_attempts rows so the table never grows unbounded.
+// Using random rather than a cron job keeps the project dependency-free.
+if (random_int(1, 100) === 1) {
+    try {
+        Database::getInstance()->exec(
+            "DELETE FROM login_attempts WHERE locked_until IS NOT NULL AND locked_until < datetime('now')"
+        );
+    } catch (Throwable $e) {
+        // Non-critical – log and continue
+        error_log('Housekeeping error: ' . $e->getMessage());
+    }
+}
