@@ -1,0 +1,39 @@
+RewriteEngine On
+
+# ─── Block direct access to sensitive directories ───
+RewriteRule ^db/ - [F,L]
+RewriteRule ^includes/ - [F,L]
+RewriteRule ^uploads/ - [F,L]
+
+# ─── Public file endpoints ───
+RewriteRule ^files/metadata/(.+)$ public_file.php?action=metadata&file=$1 [L,QSA]
+RewriteRule ^files/download/(.+)$ public_file.php?action=download&file=$1 [L,QSA]
+
+# ─── API routing ───
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^api/(.*)$ api/router.php [L,QSA]
+
+# ─── Admin SPA ───
+RewriteCond %{REQUEST_FILENAME} !-f
+RewriteCond %{REQUEST_FILENAME} !-d
+RewriteRule ^admin/?$ admin/index.html [L]
+
+# Prevent PHP execution in uploads
+<Directory "uploads">
+    <FilesMatch "\.ph(p|tml)$">
+        Require all denied
+    </FilesMatch>
+    php_flag engine off
+</Directory>
+
+# Security headers
+<IfModule mod_headers.c>
+    Header always set X-Content-Type-Options "nosniff"
+    Header always set X-Frame-Options "DENY"
+    Header always set X-XSS-Protection "1; mode=block"
+    Header always set Referrer-Policy "strict-origin-when-cross-origin"
+</IfModule>
+
+# Disable directory browsing
+Options -Indexes

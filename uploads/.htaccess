@@ -1,0 +1,3 @@
+# Security: Block all direct access to uploaded files
+# Files are served through public_file.php only
+Deny from all

@@ -1,0 +1,18 @@
+# Database
+db/*.sqlite
+db/*.sqlite-journal
+db/*.sqlite-wal
+
+# Uploaded Files
+uploads/*
+!uploads/.htaccess
+
+# OS / IDE
+.vscode/
+.idea/
+Thumbs.db
+.DS_Store
+
+# Temporary files
+router.php
+test.txt

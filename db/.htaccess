@@ -1,0 +1,2 @@
+# Security: Block all direct access to database
+Deny from all
