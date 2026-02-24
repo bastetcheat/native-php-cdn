@@ -200,15 +200,31 @@ class Security
         'wasm',
     ];
 
-    private static int $maxFileSize = 100 * 1024 * 1024; // 100 MB
+    private static int $maxFileSize = 700 * 1024 * 1024; // fallback default (overridden by DB)
+    private static bool $maxFileSizeLoaded = false;
+
+    /** Read the configured max upload size from the settings table (cached per-request). */
+    private static function getMaxFileSize(): int
+    {
+        if (!self::$maxFileSizeLoaded) {
+            $mb = (int) Database::getSetting('max_upload_mb', '700');
+            if ($mb < 1)
+                $mb = 1;
+            self::$maxFileSize = $mb * 1024 * 1024;
+            self::$maxFileSizeLoaded = true;
+        }
+        return self::$maxFileSize;
+    }
 
     public static function validateFile(array $file): ?string
     {
         if ($file['error'] !== UPLOAD_ERR_OK) {
             return 'File upload failed with error code: ' . $file['error'];
         }
-        if ($file['size'] > self::$maxFileSize) {
-            return 'File exceeds maximum size of 100MB';
+        $maxBytes = self::getMaxFileSize();
+        $maxMb = (int) round($maxBytes / 1024 / 1024);
+        if ($file['size'] > $maxBytes) {
+            return 'File exceeds maximum allowed size of ' . $maxMb . ' MB';
         }
         // Detect real MIME type
         $finfo = new finfo(FILEINFO_MIME_TYPE);

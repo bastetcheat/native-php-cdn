@@ -418,7 +418,7 @@
             <div id="drop-zone" class="drop-zone mb-8 animate-slide-up">
                 <i data-lucide="cloud-upload" class="w-12 h-12 mx-auto mb-4 text-slate-500"></i>
                 <p class="text-lg font-medium">Drop files here or click to upload</p>
-                <p class="text-slate-500 text-sm mt-1">Maximum file size: 100MB</p>
+                <p class="text-slate-500 text-sm mt-1">Maximum file size: <span id="dz-max-size">${state.maxUploadMb ? state.maxUploadMb + ' MB' : '700 MB'}</span></p>
                 <input id="file-input" type="file" multiple class="hidden">
             </div>
 
@@ -922,7 +922,7 @@
         renderLayout('settings', `
             <div class="mb-8">
                 <h2 class="text-2xl font-bold">Settings</h2>
-                <p class="text-slate-500 mt-1">Manage your account settings</p>
+                <p class="text-slate-500 mt-1">Manage your account and upload settings</p>
             </div>
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-6 stagger">
@@ -963,16 +963,51 @@
                         <i data-lucide="check" class="w-4 h-4"></i> Update Password
                     </button>
                 </div>
-            </div>
 
-            <!-- Danger Zone -->
-            <div class="glass p-6 mt-6 border border-red-500/10 animate-slide-up">
-                <h3 class="text-lg font-semibold text-red-400 flex items-center gap-2">
-                    <i data-lucide="alert-triangle" class="w-5 h-5"></i> Session Info
-                </h3>
-                <p class="text-sm text-slate-500 mt-2">User ID: ${state.user?.id} &nbsp;|&nbsp; Session active since login</p>
+                <!-- Upload Settings -->
+                <div class="glass glass-hover p-6 space-y-4 animate-slide-up">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                            <i data-lucide="upload-cloud" class="w-5 h-5 text-emerald-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold">Upload Settings</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Controls the file size limit enforced by the server</p>
+                        </div>
+                    </div>
+                    <div class="space-y-3">
+                        <label class="block text-sm text-slate-400">Maximum file size per upload</label>
+                        <div class="flex items-center gap-3">
+                            <input id="max-upload-mb" type="number" min="1" max="10000" class="input" placeholder="e.g. 700">
+                            <span class="text-slate-400 font-medium whitespace-nowrap">MB</span>
+                        </div>
+                        <p class="text-xs text-slate-600">Default: 700 MB · Range: 1–10000 MB<br>
+                            <span class="text-amber-500/80">Note: must also match <code>.htaccess</code> <code>upload_max_filesize</code> and Apache/PHP limits.</span>
+                        </p>
+                    </div>
+                    <button id="save-upload" class="btn btn-primary w-full justify-center">
+                        <i data-lucide="save" class="w-4 h-4"></i> Save Limit
+                    </button>
+                </div>
+
+                <!-- Session Info -->
+                <div class="glass p-6 border border-red-500/10 animate-slide-up">
+                    <h3 class="text-lg font-semibold text-red-400 flex items-center gap-2">
+                        <i data-lucide="alert-triangle" class="w-5 h-5"></i> Session Info
+                    </h3>
+                    <p class="text-sm text-slate-500 mt-2">User ID: ${state.user?.id} &nbsp;|&nbsp; Session active since login</p>
+                </div>
             </div>
         `);
+
+        // Load current upload limit into input
+        api('settings/upload').then(res => {
+            const mb = res.data.max_upload_mb;
+            state.maxUploadMb = mb;
+            const el = document.getElementById('max-upload-mb');
+            if (el) el.value = mb;
+            // Sync drop-zone label if the user navigates back to dashboard later
+        }).catch(() => { });
 
         document.getElementById('save-username').addEventListener('click', async () => {
             const val = document.getElementById('new-username').value.trim();
@@ -995,6 +1030,19 @@
                 toast('Password updated!', 'success');
                 document.getElementById('new-password').value = '';
                 document.getElementById('confirm-password').value = '';
+            } catch (err) { toast(err.message, 'error'); }
+        });
+
+        document.getElementById('save-upload').addEventListener('click', async () => {
+            const mb = parseInt(document.getElementById('max-upload-mb').value, 10);
+            if (!mb || mb < 1 || mb > 10000) { toast('Enter a valid size between 1 and 10000 MB', 'error'); return; }
+            try {
+                await api('settings/upload', { method: 'PUT', body: { max_upload_mb: mb } });
+                state.maxUploadMb = mb;
+                toast(`Upload limit set to ${mb} MB! Update .htaccess upload_max_filesize to match.`, 'success');
+                // Refresh the drop-zone label if it's on screen
+                const dz = document.getElementById('dz-max-size');
+                if (dz) dz.textContent = mb + ' MB';
             } catch (err) { toast(err.message, 'error'); }
         });
     }

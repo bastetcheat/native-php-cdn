@@ -19,7 +19,7 @@ class Database
     private static ?PDO $instance = null;
 
     /** Current schema version – bump this when you add tables/columns */
-    private const SCHEMA_VERSION = 3;
+    private const SCHEMA_VERSION = 4;
 
     public static function getInstance(): PDO
     {
@@ -139,6 +139,21 @@ class Database
             }
         }
 
+        // ── Schema v4: key-value settings table ──────────────────────────────
+        if ($currentVersion < 4) {
+            $db->exec("CREATE TABLE IF NOT EXISTS settings (
+                key        TEXT PRIMARY KEY,
+                value      TEXT NOT NULL,
+                updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+            )");
+
+            // Seed defaults – INSERT OR IGNORE so existing values are preserved
+            // when upgrading from v3 (admin might have already tweaked these).
+            $db->exec("INSERT OR IGNORE INTO settings (key, value) VALUES
+                ('max_upload_mb', '700')
+            ");
+        }
+
         // Mark schema as up to date
         $db->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
 
@@ -146,6 +161,32 @@ class Database
         // is confirmed. TRUNCATE mode resets the WAL to near-zero size.
         // This reduces the chance of Windows blocking cdn.sqlite deletion.
         $db->exec('PRAGMA wal_checkpoint(TRUNCATE)');
+    }
+
+    /**
+     * Read a value from the settings table.
+     * @param string $key     Setting key.
+     * @param string $default Value returned when the key doesn't exist.
+     */
+    public static function getSetting(string $key, string $default = ''): string
+    {
+        $stmt = self::getInstance()->prepare('SELECT value FROM settings WHERE key = ?');
+        $stmt->execute([$key]);
+        $row = $stmt->fetch();
+        return $row ? $row['value'] : $default;
+    }
+
+    /**
+     * Write (upsert) a value to the settings table.
+     */
+    public static function setSetting(string $key, string $value): void
+    {
+        $stmt = self::getInstance()->prepare(
+            "INSERT INTO settings (key, value, updated_at)
+             VALUES (?, ?, datetime('now'))
+             ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
+        );
+        $stmt->execute([$key, $value]);
     }
 
     /**

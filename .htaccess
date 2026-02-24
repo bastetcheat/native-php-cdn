@@ -1,5 +1,14 @@
 RewriteEngine On
 
+# ─── PHP upload limits (adjust max_upload_mb in Admin → Settings to match) ───
+# These directives work with mod_php (XAMPP default). If you use PHP-FPM,
+# edit php.ini directly and restart Apache.
+php_value upload_max_filesize 700M
+php_value post_max_size        750M
+php_value max_execution_time   600
+php_value max_input_time       600
+php_value memory_limit         256M
+
 # ─── Block direct access to sensitive directories ───
 RewriteRule ^db/ - [F,L]
 RewriteRule ^includes/ - [F,L]

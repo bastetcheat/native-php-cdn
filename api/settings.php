@@ -76,6 +76,39 @@ switch ($action) {
         echo json_encode(['success' => true, 'data' => ['message' => 'Username updated successfully', 'username' => $newUsername]]);
         break;
 
+    case 'upload':
+        if ($method === 'GET') {
+            $mb = (int) Database::getSetting('max_upload_mb', '700');
+            echo json_encode(['success' => true, 'data' => ['max_upload_mb' => $mb]]);
+            break;
+        }
+
+        if ($method !== 'PUT') {
+            http_response_code(405);
+            echo json_encode(['success' => false, 'error' => 'Method not allowed']);
+            exit;
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true);
+        $mb = isset($input['max_upload_mb']) ? (int) $input['max_upload_mb'] : 0;
+
+        if ($mb < 1 || $mb > 10000) {
+            http_response_code(400);
+            echo json_encode(['success' => false, 'error' => 'max_upload_mb must be between 1 and 10000']);
+            exit;
+        }
+
+        Database::setSetting('max_upload_mb', (string) $mb);
+
+        echo json_encode([
+            'success' => true,
+            'data' => [
+                'max_upload_mb' => $mb,
+                'message' => 'Upload limit updated to ' . $mb . ' MB',
+            ]
+        ]);
+        break;
+
     default:
         http_response_code(404);
         echo json_encode(['success' => false, 'error' => 'Settings endpoint not found']);
