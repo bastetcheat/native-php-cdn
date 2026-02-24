@@ -187,6 +187,7 @@
             'tokens': renderTokens,
             'settings': renderSettings,
             'docs': renderDocs,
+            'server': renderServer,
         };
 
         const renderer = pages[route] || pages['login'];
@@ -203,6 +204,7 @@
             { id: 'tokens', icon: 'key-round', label: 'OAuth Tokens' },
             { id: 'settings', icon: 'settings', label: 'Settings' },
             { id: 'docs', icon: 'book-open', label: 'API Docs' },
+            { id: 'server', icon: 'server', label: 'Server' },
         ];
 
         app.innerHTML = `
@@ -995,6 +997,233 @@
                 document.getElementById('confirm-password').value = '';
             } catch (err) { toast(err.message, 'error'); }
         });
+    }
+
+    // ════════════════════════════════════
+    //  SERVER / OPCACHE PAGE
+    // ════════════════════════════════════
+    function renderServer() {
+        renderLayout('server', `
+            <div class="mb-8">
+                <h2 class="text-2xl font-bold">Server</h2>
+                <p class="text-slate-500 mt-1">PHP OPcache control &amp; php.ini editor</p>
+            </div>
+            <div id="opcache-root" class="space-y-6">
+                <div class="glass p-8 text-center">
+                    <span class="spinner"></span>
+                    <p class="text-slate-500 mt-3">Loading server info…</p>
+                </div>
+            </div>
+        `);
+        loadOpcache();
+    }
+
+    async function loadOpcache() {
+        const root = document.getElementById('opcache-root');
+        try {
+            const res = await api('opcache');
+            const d = res.data;
+            const s = d.status;      // opcache_get_status() output
+            const cfg = d.settings;   // values read from php.ini
+
+            // ── Memory gauge numbers ─────────────────────────────────────────
+            const mem = s ? s.memory_usage : null;
+            const memUsed = mem ? mem.used_memory : 0;
+            const memFree = mem ? mem.free_memory : 0;
+            const memWasted = mem ? mem.wasted_memory : 0;
+            const memTotal = memUsed + memFree + memWasted;
+            const usedPct = memTotal ? Math.round((memUsed / memTotal) * 100) : 0;
+            const wastedPct = memTotal ? Math.round((memWasted / memTotal) * 100) : 0;
+
+            const stats = s ? s.opcache_statistics : null;
+            const hitRate = stats ? parseFloat(stats.opcache_hit_rate).toFixed(1) : '–';
+            const cachedFiles = stats ? stats.num_cached_scripts : '–';
+            const hits = stats ? stats.hits.toLocaleString() : '–';
+            const misses = stats ? stats.misses.toLocaleString() : '–';
+
+            const enabled = d.extension_loaded && s && s.opcache_enabled;
+            const hitColor = parseFloat(hitRate) >= 90 ? '#22c55e'
+                : parseFloat(hitRate) >= 60 ? '#f59e0b' : '#ef4444';
+
+            // SVG ring for hit rate
+            const R = 36, circ = 2 * Math.PI * R;
+            const dash = circ * (parseFloat(hitRate) / 100 || 0);
+
+            // ── Permission banner ────────────────────────────────────────────
+            let permBanner = '';
+            if (!d.extension_loaded) {
+                permBanner = `<div class="glass border border-amber-500/30 p-4 rounded-xl flex items-start gap-3 mb-2">
+                    <i data-lucide="alert-triangle" class="w-5 h-5 text-amber-400 mt-0.5 flex-shrink-0"></i>
+                    <div>
+                        <p class="font-semibold text-amber-300">OPcache not loaded</p>
+                        <p class="text-sm text-slate-400 mt-1">Enable it in php.ini: uncomment <code class="text-indigo-300">zend_extension=opcache</code> and restart Apache.</p>
+                    </div>
+                </div>`;
+            } else if (!d.php_ini_writable) {
+                const errMsg = d.php_ini_path
+                    ? `php.ini is not writable: <code class="text-red-300 break-all">${esc(d.php_ini_path)}</code><br><span class="text-slate-400">Right-click → Properties → Security → grant Write to the Apache user (e.g. SYSTEM or your user), OR run XAMPP as Administrator.</span>`
+                    : 'php.ini could not be located. Ensure PHP is properly installed.';
+                permBanner = `<div class="glass border border-red-500/30 p-4 rounded-xl flex items-start gap-3 mb-2">
+                    <i data-lucide="lock" class="w-5 h-5 text-red-400 mt-0.5 flex-shrink-0"></i>
+                    <div class="text-sm"><p class="font-semibold text-red-300 mb-1">No write permission to php.ini</p>${errMsg}<br><span class="text-slate-500 text-xs">You can still view status and reset cache, but cannot change settings.</span></div>
+                </div>`;
+            }
+
+            // ── Setting row helpers ──────────────────────────────────────────
+            const canWrite = d.php_ini_writable;
+            const boolRow = (key, label, desc) => {
+                const val = cfg[key];
+                const checked = val === '1' || val === 'On' || val === 'on';
+                return `<div class="flex items-center justify-between py-3 border-b border-white/5">
+                    <div>
+                        <p class="font-medium text-sm">${label}</p>
+                        <p class="text-xs text-slate-500 mt-0.5">${desc}</p>
+                        <code class="text-[10px] text-slate-600">${key}</code>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer ml-4 flex-shrink-0">
+                        <input type="checkbox" id="oc-${key}" class="sr-only peer" ${checked ? 'checked' : ''} ${canWrite ? '' : 'disabled'}>
+                        <div class="w-11 h-6 rounded-full bg-slate-700 peer-checked:bg-indigo-600 transition-colors
+                             after:content-[''] after:absolute after:top-0.5 after:left-0.5 after:bg-white after:rounded-full
+                             after:h-5 after:w-5 after:transition-all peer-checked:after:translate-x-5
+                             ${canWrite ? '' : 'opacity-50'}"></div>
+                    </label>
+                </div>`;
+            };
+            const numRow = (key, label, desc, unit, min, max) => {
+                const val = cfg[key] ?? '';
+                return `<div class="flex items-center justify-between py-3 border-b border-white/5">
+                    <div class="flex-1 min-w-0 pr-4">
+                        <p class="font-medium text-sm">${label}</p>
+                        <p class="text-xs text-slate-500 mt-0.5">${desc}</p>
+                        <code class="text-[10px] text-slate-600">${key}</code>
+                    </div>
+                    <div class="flex items-center gap-2 flex-shrink-0">
+                        <input type="number" id="oc-${key}" value="${esc(String(val))}" min="${min}" max="${max}"
+                            class="input w-24 text-sm text-right" ${canWrite ? '' : 'disabled'} placeholder="–">
+                        <span class="text-xs text-slate-500 w-8">${unit}</span>
+                    </div>
+                </div>`;
+            };
+
+            root.innerHTML = `
+            ${permBanner}
+
+            <!-- Status Cards -->
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 stagger">
+                <div class="glass p-5 animate-slide-up text-center">
+                    <div class="text-2xl font-bold ${enabled ? 'text-emerald-400' : 'text-red-400'}">${enabled ? 'ON' : 'OFF'}</div>
+                    <p class="text-xs text-slate-500 mt-1 uppercase tracking-wider">OPcache Status</p>
+                    <div class="mt-2 inline-flex items-center gap-1.5 text-xs px-2 py-0.5 rounded-full ${enabled ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}">
+                        <span class="w-1.5 h-1.5 rounded-full ${enabled ? 'bg-emerald-400' : 'bg-red-400'} animate-pulse"></span>
+                        ${enabled ? 'Running' : 'Disabled'}
+                    </div>
+                </div>
+
+                <!-- Hit Rate Ring -->
+                <div class="glass p-5 animate-slide-up flex flex-col items-center justify-center">
+                    <svg width="88" height="88" viewBox="0 0 88 88">
+                        <circle cx="44" cy="44" r="${R}" fill="none" stroke="#1e293b" stroke-width="8"/>
+                        <circle cx="44" cy="44" r="${R}" fill="none" stroke="${hitColor}" stroke-width="8"
+                            stroke-dasharray="${dash.toFixed(1)} ${circ.toFixed(1)}"
+                            stroke-linecap="round" transform="rotate(-90 44 44)" style="transition:stroke-dasharray .6s ease"/>
+                        <text x="44" y="49" text-anchor="middle" fill="white" font-size="14" font-weight="700">${hitRate}%</text>
+                    </svg>
+                    <p class="text-xs text-slate-500 -mt-1 uppercase tracking-wider">Hit Rate</p>
+                </div>
+
+                <div class="glass p-5 animate-slide-up text-center">
+                    <div class="text-2xl font-bold text-indigo-400">${cachedFiles}</div>
+                    <p class="text-xs text-slate-500 mt-1 uppercase tracking-wider">Cached Scripts</p>
+                    <p class="text-xs text-slate-600 mt-2">${hits} hits / ${misses} misses</p>
+                </div>
+
+                <div class="glass p-5 animate-slide-up">
+                    <p class="text-xs text-slate-500 uppercase tracking-wider mb-3">Memory</p>
+                    <div class="w-full bg-slate-800 rounded-full h-2 overflow-hidden mb-2">
+                        <div class="h-2 rounded-full bg-gradient-to-r from-indigo-500 to-purple-500" style="width:${usedPct}%"></div>
+                    </div>
+                    <div class="flex justify-between text-[10px] text-slate-500">
+                        <span>${formatSize(memUsed)} used</span>
+                        <span>${usedPct}%</span>
+                    </div>
+                    <div class="text-[10px] text-slate-600 mt-1">${formatSize(memWasted)} wasted · ${formatSize(memFree)} free</div>
+                </div>
+            </div>
+
+            <!-- php.ini path -->
+            ${d.php_ini_path ? `<div class="glass px-4 py-3 flex items-center gap-3 text-sm">
+                <i data-lucide="file-cog" class="w-4 h-4 text-slate-500 flex-shrink-0"></i>
+                <span class="text-slate-400">php.ini:</span>
+                <code class="text-slate-300 text-xs break-all flex-1">${esc(d.php_ini_path)}</code>
+                <span class="text-xs px-2 py-0.5 rounded-full ${d.php_ini_writable ? 'bg-emerald-500/10 text-emerald-400' : 'bg-red-500/10 text-red-400'}">
+                    ${d.php_ini_writable ? '✓ writable' : '✗ read-only'}
+                </span>
+            </div>` : ''}
+
+            <!-- Settings Panel -->
+            <div class="glass p-6 animate-slide-up">
+                <div class="flex items-center justify-between mb-4">
+                    <h3 class="text-lg font-semibold flex items-center gap-2">
+                        <i data-lucide="sliders-horizontal" class="w-5 h-5 text-indigo-400"></i>
+                        php.ini OPcache Settings
+                    </h3>
+                    <div class="flex gap-2">
+                        <button id="oc-reset-btn" class="btn btn-ghost btn-sm" ${d.extension_loaded ? '' : 'disabled'}>
+                            <i data-lucide="refresh-cw" class="w-3.5 h-3.5"></i> Clear Cache
+                        </button>
+                        <button id="oc-save-btn" class="btn btn-primary btn-sm" ${canWrite ? '' : 'disabled'}>
+                            <i data-lucide="save" class="w-3.5 h-3.5"></i> Save &amp; Restart Reminder
+                        </button>
+                    </div>
+                </div>
+                <div class="divide-y divide-white/5">
+                    ${boolRow('opcache.enable', 'Enable OPcache', 'Master on/off switch for the opcode cache')}
+                    ${numRow('opcache.memory_consumption', 'Memory Limit', 'Shared memory for storing compiled PHP scripts', 'MB', 8, 2048)}
+                    ${numRow('opcache.max_accelerated_files', 'Max Cached Files', 'Maximum number of PHP files that can be cached', '', 200, 1000000)}
+                    ${boolRow('opcache.validate_timestamps', 'Validate Timestamps', 'Recheck files for changes (disable in production for speed)')}
+                    ${numRow('opcache.revalidate_freq', 'Revalidate Frequency', 'How often (seconds) to check for file changes when validate_timestamps is on', 's', 0, 3600)}
+                    ${boolRow('opcache.fast_shutdown', 'Fast Shutdown', 'Use faster PHP shutdown sequence')}
+                    ${boolRow('opcache.enable_cli', 'Enable for CLI', 'Enable OPcache for command-line PHP')}
+                </div>
+                ${canWrite ? `<p class="text-xs text-amber-400/80 mt-4 flex items-center gap-1.5">
+                    <i data-lucide="info" class="w-3.5 h-3.5"></i>
+                    Changes write to php.ini immediately but require an Apache restart to take effect.
+                </p>` : ''}
+            </div>`;
+
+            lucide.createIcons({ attrs: { class: 'w-5 h-5' }, nameAttr: 'data-lucide' });
+
+            // ── Buttons ──────────────────────────────────────────────────────
+            document.getElementById('oc-reset-btn')?.addEventListener('click', async () => {
+                try {
+                    await api('opcache/reset', { method: 'POST' });
+                    toast('OPcache cleared!', 'success');
+                    loadOpcache();
+                } catch (e) { toast(e.message, 'error'); }
+            });
+
+            document.getElementById('oc-save-btn')?.addEventListener('click', async () => {
+                const boolKeys = ['opcache.enable', 'opcache.validate_timestamps', 'opcache.fast_shutdown', 'opcache.enable_cli'];
+                const numKeys = ['opcache.memory_consumption', 'opcache.max_accelerated_files', 'opcache.revalidate_freq'];
+                const payload = {};
+                boolKeys.forEach(k => {
+                    const el = document.getElementById('oc-' + k);
+                    if (el) payload[k] = el.checked;
+                });
+                numKeys.forEach(k => {
+                    const el = document.getElementById('oc-' + k);
+                    if (el && el.value !== '') payload[k] = parseInt(el.value, 10);
+                });
+                try {
+                    await api('opcache/config', { method: 'POST', body: payload });
+                    toast('php.ini saved! Restart Apache to apply changes.', 'success');
+                    loadOpcache();
+                } catch (e) { toast(e.message, 'error'); }
+            });
+
+        } catch (err) {
+            root.innerHTML = `<div class="glass p-8 text-center text-red-400"><p>${esc(err.message)}</p></div>`;
+        }
     }
 
     // ════════════════════════════════════
