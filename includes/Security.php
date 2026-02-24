@@ -244,10 +244,20 @@ class Security
             echo json_encode(['success' => false, 'error' => 'Authentication required']);
             exit;
         }
-        return [
+        $user = [
             'id' => $_SESSION['user_id'],
             'username' => $_SESSION['username'],
         ];
+
+        // ── Release session lock ASAP ────────────────────────────────────────
+        // The admin panel fires multiple API requests in parallel (auth/me, files,
+        // tokens…). PHP's default session handler locks the session FILE for the
+        // ENTIRE duration of each request. Without this call, requests queue up
+        // single-file and Apache workers hang waiting for the lock.
+        // We've already read everything we need from $_SESSION, so close it now.
+        session_write_close();
+
+        return $user;
     }
 
     /** Validate OAuth Bearer token, return user info or null */

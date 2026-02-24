@@ -5,6 +5,10 @@
  */
 require_once __DIR__ . '/bootstrap.php';
 
+// Public endpoints don't use sessions. Release the session file lock immediately
+// so concurrent requests from the same browser are never blocked by a download.
+session_write_close();
+
 $db = Database::getInstance();
 
 $action = $_GET['action'] ?? '';

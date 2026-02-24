@@ -53,8 +53,11 @@ switch ($action) {
         $_SESSION['user_id'] = $user['id'];
         $_SESSION['username'] = $user['username'];
 
-        // Generate CSRF token
+        // Generate CSRF token (also writes to $_SESSION – do this before close)
         $csrf = Security::generateCsrfToken();
+
+        // All session writes are done – release the lock so other requests can proceed
+        session_write_close();
 
         echo json_encode([
             'success' => true,
@@ -101,21 +104,30 @@ switch ($action) {
             echo json_encode(['success' => false, 'error' => 'Not authenticated']);
             exit;
         }
+        $userId = $_SESSION['user_id'];
+        // Done reading session – release the lock immediately
+        session_write_close();
+
         $stmt = $db->prepare("SELECT id, username, must_change_pw, created_at, updated_at FROM users WHERE id = ?");
-        $stmt->execute([$_SESSION['user_id']]);
+        $stmt->execute([$userId]);
         $user = $stmt->fetch();
         if (!$user) {
             http_response_code(401);
             echo json_encode(['success' => false, 'error' => 'User not found']);
             exit;
         }
+        // Re-open session briefly to get/generate CSRF token, then close again
+        session_start();
+        $csrf = Security::generateCsrfToken();
+        session_write_close();
+
         echo json_encode([
             'success' => true,
             'data' => [
                 'id' => $user['id'],
                 'username' => $user['username'],
                 'must_change_pw' => (bool) $user['must_change_pw'],
-                'csrf_token' => Security::generateCsrfToken(),
+                'csrf_token' => $csrf,
                 'created_at' => $user['created_at'],
                 'updated_at' => $user['updated_at'],
             ]
