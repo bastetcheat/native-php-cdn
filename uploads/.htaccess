@@ -1,3 +1,28 @@
-# Security: Block all direct access to uploaded files
-# Files are served through public_file.php only
+# ── Security: uploads directory ──────────────────────────────────────────
+# Layer 1: Block ALL direct HTTP access. Files are served ONLY via public_file.php.
 Deny from all
+
+# Layer 2: Disable PHP engine so uploaded PHP/HTML files can NEVER execute,
+# even if direct access were somehow bypass (defense-in-depth).
+<IfModule mod_php.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php8.c>
+    php_flag engine off
+</IfModule>
+<IfModule mod_php7.c>
+    php_flag engine off
+</IfModule>
+
+# Layer 3: Disable CGI execution
+Options -ExecCGI
+RemoveHandler .php .php3 .php4 .php5 .php7 .php8 .phtml .phar
+RemoveHandler .cgi .pl .py .rb .sh .bash
+RemoveType  application/x-httpd-php .php .phtml .phar
+
+# Layer 4: Force all files in this directory to be treated as binary downloads
+# if they are somehow accessed directly (e.g., shared hosting without Deny from all)
+<IfModule mod_mime.c>
+    ForceType application/octet-stream
+</IfModule>
+

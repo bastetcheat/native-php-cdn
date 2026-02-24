@@ -68,24 +68,35 @@ switch ($action) {
             exit;
         }
 
-        // Increment download count
-        $upd = $db->prepare("UPDATE files SET download_count = download_count + 1 WHERE id = ?");
-        $upd->execute([$file['id']]);
-
-        // Stream file
-        header('Content-Type: ' . $file['mime_type']);
-        header('Content-Length: ' . $file['size']);
-        header('Content-Disposition: inline; filename="' . str_replace('"', '\\"', $file['original_name']) . '"');
-        header('Cache-Control: public, max-age=86400');
-        header('ETag: "' . $file['sha256_hash'] . '"');
-        header("X-Content-Type-Options: nosniff");
-
-        // Check ETag for 304
-        $ifNone = $_SERVER['HTTP_IF_NONE_MATCH'] ?? '';
-        if ($ifNone === '"' . $file['sha256_hash'] . '"') {
+        // ETag / 304 check BEFORE incrementing — a cached hit is not a real download
+        $etag = '"' . $file['sha256_hash'] . '"';
+        $ifNone = trim($_SERVER['HTTP_IF_NONE_MATCH'] ?? '');
+        if ($ifNone === $etag) {
+            header('ETag: ' . $etag);
             http_response_code(304);
             exit;
         }
+
+        // Increment download count (only for real, non-cached downloads)
+        $upd = $db->prepare("UPDATE files SET download_count = download_count + 1 WHERE id = ?");
+        $upd->execute([$file['id']]);
+
+        // Sanitize MIME: remap any executable/renderable type to safe binary
+        $safeMime = sanitizeMime($file['mime_type'], $file['extension']);
+
+        // Disposition: always 'attachment' for executable/renderable types,
+        // 'inline' only for truly safe media types (images, audio, video, pdf)
+        $disposition = isSafeInline($safeMime) ? 'inline' : 'attachment';
+
+        $safeFilename = str_replace(['"', '\\', "\r", "\n"], '', $file['original_name']);
+
+        header('Content-Type: ' . $safeMime);
+        header('Content-Length: ' . filesize($filePath));
+        header('Content-Disposition: ' . $disposition . '; filename="' . $safeFilename . '"');
+        header('Cache-Control: public, max-age=86400');
+        header('ETag: ' . $etag);
+        header('X-Content-Type-Options: nosniff');
+        header('X-Robots-Tag: noindex');
 
         readfile($filePath);
         break;
@@ -95,6 +106,108 @@ switch ($action) {
         header('Content-Type: application/json');
         echo json_encode(['success' => false, 'error' => 'Invalid action']);
         break;
+}
+
+/**
+ * Remap executable or renderable MIME types to application/octet-stream.
+ * This is the key security layer: even if a PHP or HTML file was uploaded,
+ * the browser will never execute or render it – it just downloads binary bytes.
+ */
+function sanitizeMime(string $mime, string $ext): string
+{
+    // Explicit dangerous MIMEs → force binary
+    $dangerous = [
+        'text/html',
+        'text/xhtml+xml',
+        'application/xhtml+xml',
+        'application/x-php',
+        'application/php',
+        'text/php',
+        'text/x-php',
+        'application/x-httpd-php',
+        'text/javascript',
+        'application/javascript',
+        'application/ecmascript',
+        'text/ecmascript',
+        'application/x-sh',
+        'text/x-shellscript',
+        'application/x-cgi',
+        'application/x-perl',
+        'text/x-perl',
+        'application/x-python',
+        'text/x-python',
+        'application/x-ruby',
+        'image/svg+xml',          // SVG can contain embedded JS
+        'application/xml',
+        'text/xml',
+    ];
+
+    if (in_array(strtolower($mime), $dangerous, true)) {
+        return 'application/octet-stream';
+    }
+
+    // Also catch by extension as a fallback
+    $dangerousExts = [
+        'php',
+        'php3',
+        'php4',
+        'php5',
+        'php7',
+        'php8',
+        'phtml',
+        'phar',
+        'html',
+        'htm',
+        'xhtml',
+        'js',
+        'mjs',
+        'cjs',
+        'ts',
+        'sh',
+        'bash',
+        'cgi',
+        'pl',
+        'py',
+        'rb',
+        'cmd',
+        'bat',
+        'ps1',
+        'svg',
+        'xml',
+        'xsl'
+    ];
+    if (in_array(strtolower($ext), $dangerousExts, true)) {
+        return 'application/octet-stream';
+    }
+
+    return $mime;
+}
+
+/**
+ * Returns true only for MIME types that are safe to display inline in a browser
+ * (images, audio, video, PDF) — everything else forces a download.
+ */
+function isSafeInline(string $mime): bool
+{
+    $safeInline = [
+        'image/jpeg',
+        'image/png',
+        'image/gif',
+        'image/webp',
+        'image/bmp',
+        'image/ico',
+        'image/x-icon',
+        'audio/mpeg',
+        'audio/ogg',
+        'audio/wav',
+        'audio/flac',
+        'audio/webm',
+        'video/mp4',
+        'video/webm',
+        'video/ogg',
+        'application/pdf',
+    ];
+    return in_array(strtolower($mime), $safeInline, true);
 }
 
 /** Convert bytes to human-readable format */
