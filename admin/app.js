@@ -16,6 +16,13 @@
     // Relative path from /admin/ up to project root
     const basePath = '../';
 
+    // Compute absolute CDN base URL once (strip hash and trailing /admin/ segment)
+    // e.g. https://cdn-loader.bastet.win/v2
+    const _adminPath = location.pathname.replace(/\/[^\/]*$/, ''); // strip filename if any
+    const _baseParts = _adminPath.split('/');
+    _baseParts.pop(); // go up one level (out of /admin)
+    window._cdnBase = location.origin + (_baseParts.join('/') || '');
+
     // ─── API Helper ───
     async function api(endpoint, options = {}) {
         const url = basePath + 'api/' + endpoint;
@@ -536,17 +543,17 @@
                                 <td class="font-mono text-xs">${f.download_count}</td>
                                 <td class="text-xs text-slate-500">${timeAgo(f.created_at)}</td>
                                 <td>
-                                    <div class="flex items-center justify-end gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                        <button onclick="copyText(location.origin + new URL('${basePath}files/download/${encodeURIComponent(f.original_name)}', location.href).pathname)" class="btn btn-ghost btn-xs" data-tooltip="Copy Download URL">
+                                    <div class="flex items-center justify-end gap-1">
+                                        <button onclick="copyDownload(this)" data-name="${esc(f.original_name)}" class="btn btn-ghost btn-xs tip" data-tooltip="Copy Download URL">
                                             <i data-lucide="link" class="w-3 h-3"></i>
                                         </button>
-                                        <button onclick="copyText(location.origin + new URL('${basePath}files/metadata/${encodeURIComponent(f.original_name)}', location.href).pathname)" class="btn btn-ghost btn-xs" data-tooltip="Copy Metadata URL">
+                                        <button onclick="copyMeta(this)" data-name="${esc(f.original_name)}" class="btn btn-ghost btn-xs tip" data-tooltip="Copy Metadata URL">
                                             <i data-lucide="file-json" class="w-3 h-3"></i>
                                         </button>
-                                        <button onclick="showUpdateModal(${f.id})" class="btn btn-ghost btn-xs" data-tooltip="Update File">
+                                        <button onclick="showUpdateModal(${f.id})" class="btn btn-ghost btn-xs tip" data-tooltip="Update File">
                                             <i data-lucide="refresh-cw" class="w-3 h-3"></i>
                                         </button>
-                                        <button onclick="deleteFile(${f.id}, '${esc(f.original_name)}')" class="btn btn-ghost btn-xs text-red-400 hover:text-red-300" data-tooltip="Delete">
+                                        <button onclick="deleteFile(${f.id}, this)" data-name="${esc(f.original_name)}" class="btn btn-ghost btn-xs text-red-400 hover:text-red-300 tip" data-tooltip="Delete">
                                             <i data-lucide="trash-2" class="w-3 h-3"></i>
                                         </button>
                                     </div>
@@ -590,7 +597,15 @@
     window.loadFiles = loadFiles;
     window.copyText = copyText;
 
-    window.deleteFile = async function (id, name) {
+    window.copyDownload = function (btn) {
+        copyText(window._cdnBase + '/files/download/' + encodeURIComponent(btn.dataset.name));
+    };
+    window.copyMeta = function (btn) {
+        copyText(window._cdnBase + '/files/metadata/' + encodeURIComponent(btn.dataset.name));
+    };
+
+    window.deleteFile = async function (id, btn) {
+        const name = (btn && btn.dataset && btn.dataset.name) ? btn.dataset.name : String(id);
         if (!confirm(`Delete "${name}"? This action cannot be undone.`)) return;
         try {
             await api(`files/${id}`, { method: 'DELETE' });
@@ -1048,36 +1063,50 @@
 
                 <!-- Quick Setup for AI Agents -->
                 <div class="glass p-6 animate-slide-up border border-indigo-500/10">
-                    <h3 class="text-lg font-semibold flex items-center gap-2 mb-4">
+                    <h3 class="text-lg font-semibold flex items-center gap-2 mb-1">
                         <i data-lucide="bot" class="w-5 h-5 text-indigo-400"></i> Quick Setup for AI Agents
                     </h3>
-                    <p class="text-sm text-slate-400 mb-4">Send this block to an AI agent so it knows how to upload files to your CDN:</p>
+                    <p class="text-sm text-slate-400 mb-4">Send this block to your AI agent. It can also call <code class="text-indigo-300 bg-indigo-500/10 px-1 rounded">/api/docs</code> with its token to self-discover everything:</p>
                     <div class="code-block">
-                        <button onclick="copyText(document.getElementById('agent-doc').textContent)" class="copy-btn btn btn-ghost btn-xs">
+                        <button onclick="copyText(document.getElementById('agent-doc').textContent)" class="copy-btn btn btn-ghost btn-xs tip" data-tooltip="Copy all to clipboard">
                             <i data-lucide="copy" class="w-3 h-3"></i> Copy All
                         </button>
-                        <pre id="agent-doc"><span class="text-slate-500"># CDN Panel API – Quick Reference</span>
+                        <pre id="agent-doc"><span class="text-slate-500"># ── CDN Panel API – Quick Setup ──────────────────────────────</span>
 <span class="text-slate-500"># Base URL:</span> <span class="text-emerald-400">${esc(baseUrl)}</span>
 
-<span class="text-slate-500">## Self-Documenting Endpoint (read this first!)</span>
-<span class="text-slate-500"># Full JSON API docs (requires Bearer token):</span>
-curl '${esc(baseUrl)}/api/docs' -H 'Authorization: Bearer YOUR_TOKEN'
+<span class="text-slate-500"># ── STEP 1: Fetch full self-documenting API (AI agents: do this first!)</span>
+<span class="text-slate-500"># Returns JSON with every endpoint, params, examples, error codes.</span>
+curl '${esc(baseUrl)}/api/docs' \
+  -H 'Authorization: Bearer YOUR_TOKEN'
+<span class="text-slate-400"># Response: { "success": true, "data": { "endpoints": [...], "agent_patterns": {...} } }</span>
 
-<span class="text-slate-500">## Upload a File</span>
-<span class="text-slate-500"># POST /api/upload — requires "upload" permission</span>
+<span class="text-slate-500"># ── STEP 2: Upload a file (requires "upload" permission on token)</span>
 curl -X POST '${esc(baseUrl)}/api/upload' \
   -H 'Authorization: Bearer YOUR_TOKEN' \
-  -F 'file=@/path/to/file.rar'
+  -F 'file=@/path/to/model.onnx'
+<span class="text-slate-400"># Response:
+# { "success": true, "data": {
+#     "original_name": "model.onnx",
+#     "sha256_hash":   "a1b2c3d4...",
+#     "size":          5242880,
+#     "metadata_url":  "files/metadata/model.onnx",
+#     "download_url":  "files/download/model.onnx"
+#   }
+# }</span>
 
-<span class="text-slate-500">## Get File Metadata (public, no token needed)</span>
-curl '${esc(baseUrl)}/files/metadata/file.rar'
+<span class="text-slate-500"># ── STEP 3: Get metadata (public – no token needed)</span>
+curl '${esc(baseUrl)}/files/metadata/model.onnx'
 
-<span class="text-slate-500">## Download a File (public, no token needed)</span>
-curl -O '${esc(baseUrl)}/files/download/file.rar'
+<span class="text-slate-500"># ── STEP 4: Download the file (public – no token needed)</span>
+curl -O '${esc(baseUrl)}/files/download/model.onnx'
 
-<span class="text-slate-500"># Supported types: zip, rar, 7z, exe, dll, pt, onnx,</span>
-<span class="text-slate-500"># pkl, safetensors, images, video, audio, pdf, and more.</span>
-<span class="text-slate-500"># Max size: 100 MB per file.</span></pre>
+<span class="text-slate-500"># ── Supported types ──────────────────────────────────────────</span>
+<span class="text-slate-500"># Archives:    zip, rar, 7z, gz, tar, bz2</span>
+<span class="text-slate-500"># Executables: exe, dll, msi, sys</span>
+<span class="text-slate-500"># ML Models:   pt, onnx, pkl, safetensors, pth, ckpt, h5, pb</span>
+<span class="text-slate-500"># Media:       jpg, png, gif, webp, mp4, webm, mp3, wav, pdf</span>
+<span class="text-slate-500"># Other:       wasm, bin, dat, iso, ttf, woff, json, csv ...</span>
+<span class="text-slate-500"># Max size:    100 MB per file</span></pre>
                     </div>
                 </div>
             </div>
