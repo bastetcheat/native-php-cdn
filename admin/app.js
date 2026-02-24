@@ -982,12 +982,18 @@
                             <span class="text-slate-400 font-medium whitespace-nowrap">MB</span>
                         </div>
                         <p class="text-xs text-slate-600">Default: 700 MB · Range: 1–10000 MB<br>
-                            <span class="text-amber-500/80">Note: must also match <code>.htaccess</code> <code>upload_max_filesize</code> and Apache/PHP limits.</span>
+                            <span class="text-slate-500">Saving will update both the DB limit and <code>.htaccess</code> automatically. An Apache restart is required to apply the new PHP upload limit.</span>
                         </p>
                     </div>
-                    <button id="save-upload" class="btn btn-primary w-full justify-center">
-                        <i data-lucide="save" class="w-4 h-4"></i> Save Limit
-                    </button>
+                    <div class="flex gap-2">
+                        <button id="save-upload" class="btn btn-primary flex-1 justify-center">
+                            <i data-lucide="save" class="w-4 h-4"></i> Save &amp; Sync .htaccess
+                        </button>
+                        <button id="restart-apache-btn" class="btn btn-ghost justify-center tip" data-tooltip="Restart Apache to apply new limits">
+                            <i data-lucide="rotate-cw" class="w-4 h-4"></i> Restart Apache
+                        </button>
+                    </div>
+                    <div id="upload-result" class="hidden text-xs rounded-lg p-3 font-mono break-all"></div>
                 </div>
 
                 <!-- Session Info -->
@@ -1036,14 +1042,46 @@
         document.getElementById('save-upload').addEventListener('click', async () => {
             const mb = parseInt(document.getElementById('max-upload-mb').value, 10);
             if (!mb || mb < 1 || mb > 10000) { toast('Enter a valid size between 1 and 10000 MB', 'error'); return; }
+            const result = document.getElementById('upload-result');
             try {
-                await api('settings/upload', { method: 'PUT', body: { max_upload_mb: mb } });
+                const res = await api('settings/upload', { method: 'PUT', body: { max_upload_mb: mb } });
                 state.maxUploadMb = mb;
-                toast(`Upload limit set to ${mb} MB! Update .htaccess upload_max_filesize to match.`, 'success');
-                // Refresh the drop-zone label if it's on screen
+                const htMsg = res.data.htaccess_updated
+                    ? '✓ .htaccess synced'
+                    : '⚠ .htaccess NOT updated: ' + (res.data.htaccess_error || 'unknown error');
+                toast(`Limit set to ${mb} MB · ${res.data.htaccess_updated ? '.htaccess synced' : '.htaccess FAILED'}`, res.data.htaccess_updated ? 'success' : 'error');
+                result.className = 'text-xs rounded-lg p-3 font-mono break-all ' + (res.data.htaccess_updated ? 'bg-emerald-500/10 text-emerald-300' : 'bg-amber-500/10 text-amber-300');
+                result.textContent = htMsg + ' · Restart Apache to apply.';
+                result.classList.remove('hidden');
                 const dz = document.getElementById('dz-max-size');
                 if (dz) dz.textContent = mb + ' MB';
             } catch (err) { toast(err.message, 'error'); }
+        });
+
+        document.getElementById('restart-apache-btn').addEventListener('click', async () => {
+            const btn = document.getElementById('restart-apache-btn');
+            const result = document.getElementById('upload-result');
+            btn.disabled = true;
+            btn.innerHTML = '<span class="spinner"></span> Restarting…';
+            try {
+                const res = await api('settings/restart-apache', { method: 'POST' });
+                result.className = 'text-xs rounded-lg p-3 font-mono break-all bg-emerald-500/10 text-emerald-300';
+                result.textContent = '✓ ' + res.data.message + (res.data.output ? '\n' + res.data.output : '');
+                result.classList.remove('hidden');
+                toast('Apache restarted!', 'success');
+            } catch (err) {
+                result.className = 'text-xs rounded-lg p-3 font-mono break-all bg-red-500/10 text-red-300';
+                result.textContent = '✗ ' + err.message
+                    + (err.hint ? '\n\nHint: ' + err.hint : '')
+                    + (err.output ? '\n\nOutput:\n' + err.output : '');
+                result.classList.remove('hidden');
+                toast('Could not restart Apache automatically', 'error');
+            } finally {
+                btn.disabled = false;
+                lucide.createIcons({ attrs: { class: 'w-4 h-4' }, nameAttr: 'data-lucide' });
+                btn.innerHTML = '<i data-lucide="rotate-cw" class="w-4 h-4"></i> Restart Apache';
+                lucide.createIcons({ attrs: { class: 'w-4 h-4' }, nameAttr: 'data-lucide' });
+            }
         });
     }
 
@@ -1446,11 +1484,19 @@ curl -O '${esc(baseUrl)}/files/download/model.onnx'
 <span class="text-slate-500"># ML Models:   pt, onnx, pkl, safetensors, pth, ckpt, h5, pb</span>
 <span class="text-slate-500"># Media:       jpg, png, gif, webp, mp4, webm, mp3, wav, pdf</span>
 <span class="text-slate-500"># Other:       wasm, bin, dat, iso, ttf, woff, json, csv ...</span>
-<span class="text-slate-500"># Max size:    100 MB per file</span></pre>
+<span class="text-slate-500"># Max size:    </span><span id="docs-max-size" class="text-emerald-400">loading…</span></pre>
                     </div>
                 </div>
             </div>
         `);
+        // Async-fill the live max size in the docs
+        api('settings/upload').then(r => {
+            const el = document.getElementById('docs-max-size');
+            if (el) el.textContent = r.data.max_upload_mb + ' MB per file';
+        }).catch(() => {
+            const el = document.getElementById('docs-max-size');
+            if (el) el.textContent = '? MB per file';
+        });
     }
 
     // ─── Logout ───

@@ -31,6 +31,10 @@ $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
 $scriptDir = rtrim(dirname(dirname($_SERVER['SCRIPT_NAME'])), '/\\');
 $baseUrl = $scheme . '://' . $host . ($scriptDir !== '' ? $scriptDir : '');
 
+// Read the real configured limit from DB so the docs are always accurate
+$maxUploadMb = (int) Database::getSetting('max_upload_mb', '700');
+$maxSizeLabel = $maxUploadMb . ' MB per file';
+
 echo json_encode([
     'success' => true,
     'data' => [
@@ -71,7 +75,7 @@ echo json_encode([
                 'auth' => 'Bearer token with "upload" permission',
                 'content_type' => 'multipart/form-data',
                 'fields' => [
-                    ['name' => 'file', 'type' => 'file', 'required' => true, 'description' => 'The file to upload. Max 100 MB.'],
+                    ['name' => 'file', 'type' => 'file', 'required' => true, 'description' => 'The file to upload. Max ' . $maxUploadMb . ' MB.'],
                 ],
                 'description' => 'Upload a single file to the CDN. The file is stored with a UUID-based name internally for security. Returns the original filename and SHA-256 hash for integrity verification.',
                 'example_curl' => implode(" \\\n  ", [
@@ -106,7 +110,7 @@ echo json_encode([
                     'documents' => ['pdf', 'txt', 'csv', 'json', 'xml'],
                     'fonts' => ['ttf', 'otf', 'woff', 'woff2'],
                     'other' => ['wasm', 'bin', 'dat', 'iso'],
-                    'max_size' => '100 MB per file',
+                    'max_size' => $maxSizeLabel,
                 ],
             ],
 
