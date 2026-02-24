@@ -230,6 +230,19 @@ switch (true) {
             $newStoredName = Security::generateUUID() . ($ext ? '.' . $ext : '');
             $hash = hash_file('sha256', $file['tmp_name']);
 
+            // ── Smart versioning: reject identical files ──────────────────────
+            if (hash_equals($existing['sha256_hash'], $hash)) {
+                http_response_code(409);
+                echo json_encode([
+                    'success' => false,
+                    'same_version' => true,
+                    'error' => 'This file is identical to the current version (same SHA-256 hash). No update needed.',
+                    'current_version' => (int) $existing['version'],
+                    'sha256_hash' => $existing['sha256_hash'],
+                ]);
+                exit;
+            }
+
             $finfo = new finfo(FILEINFO_MIME_TYPE);
             $mime = $finfo->file($file['tmp_name']);
 

@@ -21,7 +21,9 @@ if (empty($fileName) || empty($action)) {
 $fileName = basename($fileName);
 
 // Look up file by original_name (use the most recent version)
-$stmt = $db->prepare("SELECT f.*, u.username as uploader FROM files f LEFT JOIN users u ON f.uploaded_by = u.id WHERE f.original_name = ? ORDER BY f.version DESC LIMIT 1");
+// Note: we intentionally do NOT join the users table here.
+// Exposing real usernames to public consumers is an information-disclosure risk.
+$stmt = $db->prepare("SELECT * FROM files WHERE original_name = ? ORDER BY version DESC LIMIT 1");
 $stmt->execute([$fileName]);
 $file = $stmt->fetch();
 
@@ -40,6 +42,20 @@ switch ($action) {
         header('Content-Type: application/json');
         header("X-Content-Type-Options: nosniff");
 
+        // Resolve a safe, non-identifying uploader label.
+        // We never expose the real username to public consumers.
+        // If the file was uploaded via an OAuth token, show the token name;
+        // otherwise fall back to the generic "Admin" label.
+        $uploaderLabel = 'Admin';
+        if (!empty($file['token_id'])) {
+            $tkStmt = $db->prepare("SELECT name FROM oauth_tokens WHERE id = ?");
+            $tkStmt->execute([$file['token_id']]);
+            $tk = $tkStmt->fetch();
+            if ($tk && !empty($tk['name'])) {
+                $uploaderLabel = 'via token: ' . $tk['name'];
+            }
+        }
+
         echo json_encode([
             'success' => true,
             'data' => [
@@ -52,7 +68,7 @@ switch ($action) {
                 'extension' => $file['extension'],
                 'download_count' => (int) $file['download_count'],
                 'version' => (int) $file['version'],
-                'uploaded_by' => $file['uploader'],
+                'uploaded_by' => $uploaderLabel,   // never the real username
                 'created_at' => $file['created_at'],
                 'updated_at' => $file['updated_at'],
                 'download_url' => 'files/download/' . urlencode($file['original_name']),

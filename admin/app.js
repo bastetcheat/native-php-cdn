@@ -23,6 +23,35 @@
     _baseParts.pop(); // go up one level (out of /admin)
     window._cdnBase = location.origin + (_baseParts.join('/') || '');
 
+    // ─── Global JS Tooltip Engine ───────────────────────────────────────────
+    // CSS ::before/::after approach doesn't work on .btn (overflow:hidden clips it
+    // and ::after is already used for the shimmer). A single fixed <div> moved by
+    // JS works perfectly everywhere.
+    const _tip = document.createElement('div');
+    _tip.className = 'tooltip-popup';
+    document.body.appendChild(_tip);
+
+    document.addEventListener('mouseover', function (e) {
+        const el = e.target.closest('[data-tooltip]');
+        if (!el) return;
+        _tip.textContent = el.dataset.tooltip;
+        _tip.classList.add('visible');
+        const r = el.getBoundingClientRect();
+        // position above the element, centred
+        const tipW = _tip.offsetWidth;
+        let left = r.left + r.width / 2 - tipW / 2;
+        // clamp to viewport
+        left = Math.max(8, Math.min(left, window.innerWidth - tipW - 8));
+        _tip.style.left = left + 'px';
+        _tip.style.top = (r.top - _tip.offsetHeight - 8) + 'px';
+    });
+    document.addEventListener('mouseout', function (e) {
+        const el = e.target.closest('[data-tooltip]');
+        if (el) _tip.classList.remove('visible');
+    });
+    // Hide when scrolling so it doesn't float away from its anchor element
+    document.addEventListener('scroll', function () { _tip.classList.remove('visible'); }, true);
+
     // ─── API Helper ───
     async function api(endpoint, options = {}) {
         const url = basePath + 'api/' + endpoint;
@@ -41,7 +70,9 @@
             const res = await fetch(url, { ...options, headers, credentials: 'same-origin' });
             const data = await res.json();
             if (!res.ok) {
-                throw new Error(data.error || `HTTP ${res.status}`);
+                const err = new Error(data.error || `HTTP ${res.status}`);
+                Object.assign(err, data); // pass same_version, sha256_hash, etc. through
+                throw err;
             }
             return data;
         } catch (err) {
@@ -643,10 +674,42 @@
             try {
                 await api(`files/${id}`, { method: 'POST', body: fd });
                 modal.classList.add('hidden');
-                toast('File updated successfully!', 'success');
+                toast('File updated to a new version!', 'success');
                 loadFiles();
             } catch (err) {
-                toast(err.message, 'error');
+                // ── Smart versioning: same-file warning ──────────────────────
+                // The API returns HTTP 409 + same_version:true when the uploaded
+                // file has the same SHA-256 hash as the current stored version.
+                if (err.same_version) {
+                    modal.innerHTML = `
+                    <div class="modal-overlay" onclick="if(event.target===this)document.getElementById('update-modal').classList.add('hidden')">
+                        <div class="modal-content glass p-6 space-y-4 border border-amber-500/30">
+                            <div class="flex items-center gap-3">
+                                <div class="w-10 h-10 rounded-full bg-amber-500/15 flex items-center justify-center flex-shrink-0">
+                                    <i data-lucide="shield-check" class="w-5 h-5 text-amber-400"></i>
+                                </div>
+                                <div>
+                                    <h3 class="font-bold text-amber-300">No Update Needed</h3>
+                                    <p class="text-xs text-slate-400 mt-0.5">Version v${err.current_version || '?'} is already up to date</p>
+                                </div>
+                            </div>
+                            <p class="text-sm text-slate-300 leading-relaxed">
+                                The file you selected is <span class="text-amber-300 font-semibold">byte-for-byte identical</span>
+                                to the current version — same SHA-256 hash. Uploading it would not create a meaningful new version.
+                            </p>
+                            <div class="bg-black/30 rounded-lg px-3 py-2 font-mono text-xs text-slate-400 break-all">
+                                <span class="text-slate-600">sha256: </span>${err.sha256_hash || ''}
+                            </div>
+                            <p class="text-xs text-slate-500">If you intended to upload a <em>different</em> version, please select the correct file.</p>
+                            <button onclick="document.getElementById('update-modal').classList.add('hidden')" class="btn btn-ghost w-full justify-center">
+                                Close
+                            </button>
+                        </div>
+                    </div>`;
+                    lucide.createIcons({ attrs: { class: 'w-5 h-5' }, nameAttr: 'data-lucide' });
+                } else {
+                    toast(err.message, 'error');
+                }
             }
         });
     };
