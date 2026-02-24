@@ -1056,19 +1056,28 @@
                         <button onclick="copyText(document.getElementById('agent-doc').textContent)" class="copy-btn btn btn-ghost btn-xs">
                             <i data-lucide="copy" class="w-3 h-3"></i> Copy All
                         </button>
-                        <pre id="agent-doc"><span class="text-slate-500"># CDN Upload API</span>
+                        <pre id="agent-doc"><span class="text-slate-500"># CDN Panel API – Quick Reference</span>
 <span class="text-slate-500"># Base URL:</span> <span class="text-emerald-400">${esc(baseUrl)}</span>
-<span class="text-slate-500"># Endpoint:</span> POST /api/upload
-<span class="text-slate-500"># Auth:</span> Bearer token in Authorization header
-<span class="text-slate-500"># Body:</span> multipart/form-data with field "file"
 
-<span class="text-slate-500"># Example (curl):</span>
-curl -X POST '${esc(baseUrl)}/api/upload' \\
-  -H 'Authorization: Bearer YOUR_TOKEN' \\
-  -F 'file=@/path/to/file.png'
+<span class="text-slate-500">## Self-Documenting Endpoint (read this first!)</span>
+<span class="text-slate-500"># Full JSON API docs (requires Bearer token):</span>
+curl '${esc(baseUrl)}/api/docs' -H 'Authorization: Bearer YOUR_TOKEN'
 
-<span class="text-slate-500"># Response: JSON with download_url and metadata_url</span>
-<span class="text-slate-500"># Files: /files/download/{name} and /files/metadata/{name}</span></pre>
+<span class="text-slate-500">## Upload a File</span>
+<span class="text-slate-500"># POST /api/upload — requires "upload" permission</span>
+curl -X POST '${esc(baseUrl)}/api/upload' \
+  -H 'Authorization: Bearer YOUR_TOKEN' \
+  -F 'file=@/path/to/file.rar'
+
+<span class="text-slate-500">## Get File Metadata (public, no token needed)</span>
+curl '${esc(baseUrl)}/files/metadata/file.rar'
+
+<span class="text-slate-500">## Download a File (public, no token needed)</span>
+curl -O '${esc(baseUrl)}/files/download/file.rar'
+
+<span class="text-slate-500"># Supported types: zip, rar, 7z, exe, dll, pt, onnx,</span>
+<span class="text-slate-500"># pkl, safetensors, images, video, audio, pdf, and more.</span>
+<span class="text-slate-500"># Max size: 100 MB per file.</span></pre>
                     </div>
                 </div>
             </div>

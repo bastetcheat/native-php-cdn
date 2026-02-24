@@ -19,14 +19,6 @@ RewriteCond %{REQUEST_FILENAME} !-f
 RewriteCond %{REQUEST_FILENAME} !-d
 RewriteRule ^admin/?$ admin/index.html [L]
 
-# Prevent PHP execution in uploads
-<Directory "uploads">
-    <FilesMatch "\.ph(p|tml)$">
-        Require all denied
-    </FilesMatch>
-    php_flag engine off
-</Directory>
-
 # Security headers
 <IfModule mod_headers.c>
     Header always set X-Content-Type-Options "nosniff"

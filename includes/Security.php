@@ -103,6 +103,7 @@ class Security
 
     // ─── File Validation ────────────────────────────────────
     private static array $allowedMimes = [
+        // Images
         'image/jpeg',
         'image/png',
         'image/gif',
@@ -110,18 +111,23 @@ class Security
         'image/svg+xml',
         'image/bmp',
         'image/ico',
+        'image/x-icon',
+        // Video
         'video/mp4',
         'video/webm',
         'video/ogg',
+        'video/avi',
+        'video/quicktime',
+        'video/x-msvideo',
+        'video/x-matroska',
+        // Audio
         'audio/mpeg',
         'audio/ogg',
         'audio/wav',
         'audio/webm',
+        'audio/flac',
+        // Documents
         'application/pdf',
-        'application/zip',
-        'application/x-rar-compressed',
-        'application/x-7z-compressed',
-        'application/gzip',
         'text/plain',
         'text/csv',
         'text/css',
@@ -129,12 +135,69 @@ class Security
         'text/html',
         'application/json',
         'application/xml',
+        'text/xml',
+        'application/rtf',
+        // Archives (all variants)
+        'application/zip',
+        'application/x-zip-compressed',
+        'application/x-rar-compressed',
+        'application/x-rar',
+        'application/vnd.rar',
+        'application/rar',
+        'application/x-7z-compressed',
+        'application/gzip',
+        'application/x-gzip',
+        'application/x-tar',
+        'application/x-bzip2',
+        // Executables / Windows binaries
+        'application/x-msdownload',
+        'application/x-dosexec',
+        'application/x-executable',
+        'application/vnd.microsoft.portable-executable',
+        // Generic binary (covers .pt, .onnx, .bin, .dat, etc.)
         'application/octet-stream',
+        // Fonts
         'font/woff',
         'font/woff2',
         'font/ttf',
         'font/otf',
+        'application/font-woff',
+        'application/font-woff2',
+        // WebAssembly
         'application/wasm',
+    ];
+
+    /** Extensions that are always allowed regardless of detected MIME (for binary/model files) */
+    private static array $allowedExtensions = [
+        'zip',
+        'rar',
+        '7z',
+        'gz',
+        'tar',
+        'bz2',
+        'exe',
+        'dll',
+        'msi',
+        'sys',
+        'pt',
+        'onnx',
+        'bin',
+        'dat',
+        'model',
+        'pb',
+        'h5',
+        'safetensors',
+        'pth',
+        'pkl',
+        'ckpt',
+        'weights',
+        'iso',
+        'img',
+        'ttf',
+        'otf',
+        'woff',
+        'woff2',
+        'wasm',
     ];
 
     private static int $maxFileSize = 100 * 1024 * 1024; // 100 MB
@@ -150,10 +213,19 @@ class Security
         // Detect real MIME type
         $finfo = new finfo(FILEINFO_MIME_TYPE);
         $detectedMime = $finfo->file($file['tmp_name']);
-        if (!in_array($detectedMime, self::$allowedMimes, true)) {
-            return 'File type not allowed: ' . $detectedMime;
+
+        // Allow if MIME is in whitelist
+        if (in_array($detectedMime, self::$allowedMimes, true)) {
+            return null;
         }
-        return null; // valid
+
+        // Fallback: allow by file extension (for binaries like .rar, .pt, .onnx)
+        $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
+        if ($ext !== '' && in_array($ext, self::$allowedExtensions, true)) {
+            return null;
+        }
+
+        return 'File type not allowed: ' . $detectedMime . ' (.' . $ext . ')';
     }
 
     public static function generateUUID(): string
