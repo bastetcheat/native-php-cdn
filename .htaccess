@@ -1,5 +1,12 @@
 RewriteEngine On
 
+# ─── Preserve Authorization header for PHP (Apache/FastCGI/proxy) ───
+RewriteCond %{HTTP:Authorization} ^(.+)$
+RewriteRule ^ - [E=HTTP_AUTHORIZATION:%1]
+<IfModule mod_setenvif.c>
+    SetEnvIfNoCase Authorization "^(.*)$" HTTP_AUTHORIZATION=$1
+</IfModule>
+
 # ─── PHP upload limits (adjust max_upload_mb in Admin → Settings to match) ───
 # These directives work with mod_php (XAMPP default). If you use PHP-FPM,
 # edit php.ini directly and restart Apache.
