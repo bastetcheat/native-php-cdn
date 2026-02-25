@@ -110,7 +110,10 @@ switch (true) {
         $offset = ($page - 1) * $perPage;
 
         $countSql = "SELECT COUNT(*) as total FROM files";
-        $listSql = "SELECT f.*, u.username as uploader FROM files f LEFT JOIN users u ON f.uploaded_by = u.id";
+        $listSql = "SELECT f.*, u.username as uploader, t.name as token_name 
+                    FROM files f 
+                    LEFT JOIN users u ON f.uploaded_by = u.id 
+                    LEFT JOIN oauth_tokens t ON f.token_id = t.id";
 
         if ($search) {
             $where = " WHERE f.original_name LIKE ?";
@@ -135,14 +138,22 @@ switch (true) {
 
         $files = $listStmt->fetchAll();
 
+        // Global stats for dashboard (always the absolute totals)
+        $globalStats = $db->query("SELECT COUNT(*) as total, COALESCE(SUM(size), 0) as total_size, COALESCE(SUM(download_count), 0) as total_downloads FROM files")->fetch();
+
         echo json_encode([
             'success' => true,
             'data' => [
                 'files' => $files,
-                'total' => $total,
+                'total' => $total, // Total matching the search filter
                 'page' => $page,
                 'per_page' => $perPage,
                 'pages' => (int) ceil($total / $perPage),
+                'stats' => [ // Global stats for dashboard cards
+                    'total_files' => (int) $globalStats['total'],
+                    'total_size' => (int) $globalStats['total_size'],
+                    'total_downloads' => (int) $globalStats['total_downloads'],
+                ]
             ],
         ]);
         break;
@@ -157,7 +168,11 @@ switch (true) {
         }
 
         if ($method === 'GET') {
-            $stmt = $db->prepare("SELECT f.*, u.username as uploader FROM files f LEFT JOIN users u ON f.uploaded_by = u.id WHERE f.id = ?");
+            $stmt = $db->prepare("SELECT f.*, u.username as uploader, t.name as token_name 
+                                 FROM files f 
+                                 LEFT JOIN users u ON f.uploaded_by = u.id 
+                                 LEFT JOIN oauth_tokens t ON f.token_id = t.id 
+                                 WHERE f.id = ?");
             $stmt->execute([$fileId]);
             $file = $stmt->fetch();
 
@@ -277,7 +292,11 @@ switch (true) {
             ]);
 
             // Fetch updated record
-            $stmt = $db->prepare("SELECT f.*, u.username as uploader FROM files f LEFT JOIN users u ON f.uploaded_by = u.id WHERE f.id = ?");
+            $stmt = $db->prepare("SELECT f.*, u.username as uploader, t.name as token_name 
+                                 FROM files f 
+                                 LEFT JOIN users u ON f.uploaded_by = u.id 
+                                 LEFT JOIN oauth_tokens t ON f.token_id = t.id 
+                                 WHERE f.id = ?");
             $stmt->execute([$fileId]);
             $updated = $stmt->fetch();
 

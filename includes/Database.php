@@ -19,7 +19,7 @@ class Database
     private static ?PDO $instance = null;
 
     /** Current schema version – bump this when you add tables/columns */
-    private const SCHEMA_VERSION = 4;
+    private const SCHEMA_VERSION = 5;
 
     public static function getInstance(): PDO
     {
@@ -152,6 +152,12 @@ class Database
             $db->exec("INSERT OR IGNORE INTO settings (key, value) VALUES
                 ('max_upload_mb', '700')
             ");
+        }
+
+        // ── Schema v5: track which token was used for upload ────────────────
+        if ($currentVersion < 5) {
+            $db->exec("ALTER TABLE files ADD COLUMN token_id INTEGER DEFAULT NULL");
+            $db->exec("CREATE INDEX IF NOT EXISTS idx_files_token_id ON files(token_id)");
         }
 
         // Mark schema as up to date

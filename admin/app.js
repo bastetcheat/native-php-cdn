@@ -498,18 +498,16 @@
             let url = `files?page=${page}&per_page=15`;
             if (search) url += `&search=${encodeURIComponent(search)}`;
             const res = await api(url);
-            const { files, total, pages, page: curPage } = res.data;
+            const { files, total, pages, page: curPage, stats } = res.data;
 
             // Stats
-            const totalSize = files.reduce((sum, f) => sum + (f.size || 0), 0);
-            const totalDownloads = files.reduce((sum, f) => sum + (f.download_count || 0), 0);
             statsEl.innerHTML = `
                 <div class="glass glass-hover p-5 animate-slide-up flex items-center gap-4">
                     <div class="w-11 h-11 rounded-xl bg-indigo-500/10 flex items-center justify-center">
                         <i data-lucide="files" class="w-5 h-5 text-indigo-400"></i>
                     </div>
                     <div>
-                        <p class="text-2xl font-bold">${total}</p>
+                        <p class="text-2xl font-bold">${stats.total_files}</p>
                         <p class="text-xs text-slate-500 uppercase tracking-wider">Total Files</p>
                     </div>
                 </div>
@@ -518,8 +516,8 @@
                         <i data-lucide="hard-drive" class="w-5 h-5 text-purple-400"></i>
                     </div>
                     <div>
-                        <p class="text-2xl font-bold">${formatSize(totalSize)}</p>
-                        <p class="text-xs text-slate-500 uppercase tracking-wider">Page Size</p>
+                        <p class="text-2xl font-bold">${formatSize(stats.total_size)}</p>
+                        <p class="text-xs text-slate-500 uppercase tracking-wider">Total Storage</p>
                     </div>
                 </div>
                 <div class="glass glass-hover p-5 animate-slide-up flex items-center gap-4">
@@ -527,8 +525,8 @@
                         <i data-lucide="download" class="w-5 h-5 text-emerald-400"></i>
                     </div>
                     <div>
-                        <p class="text-2xl font-bold">${totalDownloads}</p>
-                        <p class="text-xs text-slate-500 uppercase tracking-wider">Downloads</p>
+                        <p class="text-2xl font-bold">${stats.total_downloads}</p>
+                        <p class="text-xs text-slate-500 uppercase tracking-wider">Global Downloads</p>
                     </div>
                 </div>`;
 
@@ -550,7 +548,8 @@
                                 <th>Type</th>
                                 <th>Version</th>
                                 <th>Downloads</th>
-                                <th>Uploaded</th>
+                                <th>Uploader</th>
+                                <th>Date</th>
                                 <th class="text-right">Actions</th>
                             </tr>
                         </thead>
@@ -573,8 +572,21 @@
                                 <td class="text-center">
                                     <span class="inline-flex items-center justify-center w-7 h-7 rounded-lg bg-slate-800 text-xs font-bold">v${f.version}</span>
                                 </td>
-                                <td class="font-mono text-xs">${f.download_count}</td>
-                                <td class="text-xs text-slate-500">${timeAgo(f.created_at)}</td>
+                                 <td class="font-mono text-xs">${f.download_count}</td>
+                                <td>
+                                    <div class="flex flex-col">
+                                        <span class="text-xs font-medium text-slate-300 flex items-center gap-1.5">
+                                            <i data-lucide="user" class="w-3 h-3 text-slate-500"></i>
+                                            ${esc(f.uploader || 'System')}
+                                        </span>
+                                        ${f.token_name ? `
+                                        <span class="text-[10px] text-indigo-400 mt-0.5 flex items-center gap-1">
+                                            <i data-lucide="key" class="w-2.5 h-2.5"></i>
+                                            ${esc(f.token_name)}
+                                        </span>` : ''}
+                                    </div>
+                                </td>
+                                <td class="text-xs text-slate-500 whitespace-nowrap">${timeAgo(f.created_at)}</td>
                                 <td>
                                     <div class="flex items-center justify-end gap-1">
                                         <button onclick="copyDownload(this)" data-name="${esc(f.original_name)}" class="btn btn-ghost btn-xs tip" data-tooltip="Copy Download URL">
@@ -598,15 +610,50 @@
             }
 
             // Pagination
+            // Smart Pagination
             if (pages > 1) {
-                let pgHtml = '<div class="flex gap-1">';
+                const perPage = res.data.per_page;
+                const startIdx = (curPage - 1) * perPage + 1;
+                const endIdx = Math.min(curPage * perPage, total);
+
+                let pgHtml = `
+                    <div class="flex items-center gap-2">
+                        <button onclick="loadFiles(1, '${esc(search)}')" ${curPage === 1 ? 'disabled' : ''} class="btn btn-ghost btn-xs tip" data-tooltip="First Page">
+                            <i data-lucide="chevrons-left" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="loadFiles(${curPage - 1}, '${esc(search)}')" ${curPage === 1 ? 'disabled' : ''} class="btn btn-ghost btn-xs">
+                            <i data-lucide="chevron-left" class="w-4 h-4"></i>
+                        </button>
+                `;
+
+                // Show a window of pages
+                const windowSize = 2;
                 for (let p = 1; p <= pages; p++) {
-                    pgHtml += `<button onclick="loadFiles(${p}, '${esc(search)}')" class="btn ${p === curPage ? 'btn-primary' : 'btn-ghost'} btn-sm">${p}</button>`;
+                    if (p === 1 || p === pages || (p >= curPage - windowSize && p <= curPage + windowSize)) {
+                        pgHtml += `<button onclick="loadFiles(${p}, '${esc(search)}')" class="btn ${p === curPage ? 'btn-primary' : 'btn-ghost'} btn-sm min-w-[32px]">${p}</button>`;
+                    } else if (p === curPage - windowSize - 1 || p === curPage + windowSize + 1) {
+                        pgHtml += `<span class="px-1 text-slate-600">...</span>`;
+                    }
                 }
-                pgHtml += '</div>';
-                pagEl.innerHTML = `<span class="text-sm text-slate-500">${total} files total</span>${pgHtml}`;
+
+                pgHtml += `
+                        <button onclick="loadFiles(${curPage + 1}, '${esc(search)}')" ${curPage === pages ? 'disabled' : ''} class="btn btn-ghost btn-xs">
+                            <i data-lucide="chevron-right" class="w-4 h-4"></i>
+                        </button>
+                        <button onclick="loadFiles(${pages}, '${esc(search)}')" ${curPage === pages ? 'disabled' : ''} class="btn btn-ghost btn-xs tip" data-tooltip="Last Page">
+                            <i data-lucide="chevrons-right" class="w-4 h-4"></i>
+                        </button>
+                    </div>
+                `;
+
+                pagEl.innerHTML = `
+                    <p class="text-sm text-slate-500">
+                        Showing <span class="text-slate-300 font-medium">${startIdx}-${endIdx}</span> of <span class="text-slate-300 font-medium">${total}</span> files
+                    </p>
+                    ${pgHtml}
+                `;
             } else {
-                pagEl.innerHTML = '';
+                pagEl.innerHTML = total > 0 ? `<p class="text-sm text-slate-500">${total} files total</p>` : '';
             }
 
             lucide.createIcons({ attrs: { class: ['w-5', 'h-5'] }, nameAttr: 'data-lucide' });

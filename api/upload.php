@@ -63,7 +63,7 @@ if (!move_uploaded_file($file['tmp_name'], $dest)) {
     exit;
 }
 
-$stmt = $db->prepare("INSERT INTO files (original_name, stored_name, mime_type, size, sha256_hash, extension, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
+$stmt = $db->prepare("INSERT INTO files (original_name, stored_name, mime_type, size, sha256_hash, extension, uploaded_by, token_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)");
 $stmt->execute([
     $file['name'],
     $storedName,
@@ -72,6 +72,7 @@ $stmt->execute([
     $hash,
     $ext,
     $tokenUser['id'],
+    $tokenUser['token_id'],
 ]);
 
 $fileId = $db->lastInsertId();
