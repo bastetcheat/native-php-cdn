@@ -415,20 +415,18 @@
             </div>
 
             <!-- Upload Zone -->
-            <div id="drop-zone" class="drop-zone mb-8 animate-slide-up">
-                <i data-lucide="cloud-upload" class="w-12 h-12 mx-auto mb-4 text-slate-500"></i>
+            <div id="drop-zone" class="drop-zone mb-4 animate-slide-up">
+                <i data-lucide="cloud-upload" class="w-12 h-12 mx-auto mb-3 text-slate-500"></i>
                 <p class="text-lg font-medium">Drop files here or click to upload</p>
-                <p class="text-slate-500 text-sm mt-1">Maximum file size: <span id="dz-max-size">${state.maxUploadMb ? state.maxUploadMb + ' MB' : '700 MB'}</span></p>
+                <p class="text-slate-500 text-sm mt-1">
+                    Max: <span id="dz-max-size">${state.maxUploadMb ? state.maxUploadMb + ' MB' : '700 MB'}</span>
+                    &nbsp;·&nbsp; Files &gt;90 MB upload automatically in chunks
+                </p>
                 <input id="file-input" type="file" multiple class="hidden">
             </div>
 
-            <!-- Upload Progress -->
-            <div id="upload-progress" class="hidden mb-6 glass p-4 animate-slide-up">
-                <div class="flex items-center gap-3">
-                    <span class="spinner"></span>
-                    <span class="text-sm" id="upload-status">Uploading...</span>
-                </div>
-            </div>
+            <!-- Per-file upload progress list -->
+            <div id="upload-queue" class="mb-6 space-y-2"></div>
 
             <!-- Stats -->
             <div id="file-stats" class="grid grid-cols-1 md:grid-cols-3 gap-4 mb-6 stagger"></div>
@@ -467,25 +465,193 @@
         loadFiles();
     }
 
-    async function handleUpload(fileList) {
-        if (!fileList.length) return;
-        const prog = document.getElementById('upload-progress');
-        const status = document.getElementById('upload-status');
-        prog.classList.remove('hidden');
+    // ─── Chunked / direct upload with per-file progress bars ────────────────
+    const CHUNK_THRESHOLD = 90 * 1024 * 1024; // 90 MB → use chunked above this
+    const CHUNK_SIZE = 10 * 1024 * 1024; // 10 MB per chunk
 
-        for (let i = 0; i < fileList.length; i++) {
-            status.textContent = `Uploading ${fileList[i].name} (${i + 1}/${fileList.length})...`;
+    function createFileRow(file) {
+        const queue = document.getElementById('upload-queue');
+        const id = 'urow-' + Math.random().toString(36).slice(2);
+        const div = document.createElement('div');
+        div.id = id;
+        div.className = 'glass p-3 rounded-lg animate-slide-up';
+        div.innerHTML = `
+            <div class="flex items-center justify-between mb-1">
+                <span class="text-sm font-medium truncate max-w-xs" title="${esc(file.name)}">${esc(file.name)}</span>
+                <span class="text-xs text-slate-400 file-status ml-2">Preparing…</span>
+            </div>
+            <div class="relative h-2 bg-slate-700 rounded-full overflow-hidden">
+                <div class="file-bar h-full bg-gradient-to-r from-violet-500 to-cyan-500 rounded-full transition-all duration-200" style="width:0%"></div>
+            </div>
+            <div class="flex justify-between mt-1">
+                <span class="text-xs text-slate-500 file-detail"></span>
+                <span class="text-xs text-slate-500 file-eta"></span>
+            </div>`;
+        queue.appendChild(div);
+        return {
+            setStatus(txt) { div.querySelector('.file-status').textContent = txt; },
+            setProgress(pct) { div.querySelector('.file-bar').style.width = pct + '%'; },
+            setDetail(txt) { div.querySelector('.file-detail').textContent = txt; },
+            setEta(txt) { div.querySelector('.file-eta').textContent = txt; },
+            done(ok, msg) {
+                div.querySelector('.file-bar').style.background = ok
+                    ? 'linear-gradient(90deg,#22c55e,#10b981)'
+                    : 'linear-gradient(90deg,#ef4444,#f97316)';
+                this.setProgress(100);
+                this.setStatus(ok ? '✓ ' + (msg || 'Done') : '✗ ' + (msg || 'Failed'));
+                setTimeout(() => div.remove(), ok ? 3000 : 8000);
+            },
+        };
+    }
+
+    function fmtSpeed(bps) {
+        if (bps > 1e6) return (bps / 1e6).toFixed(1) + ' MB/s';
+        if (bps > 1e3) return (bps / 1e3).toFixed(0) + ' KB/s';
+        return bps + ' B/s';
+    }
+    function fmtEta(sec) {
+        if (!isFinite(sec) || sec < 0) return '';
+        const m = Math.floor(sec / 60), s = Math.floor(sec % 60);
+        return 'ETA ' + (m ? m + 'm ' : '') + s + 's';
+    }
+
+    async function uploadChunked(file, row) {
+        // 1. Start session
+        row.setStatus('Starting…');
+        const startRes = await api('chunked?action=start', {
+            method: 'POST',
+            body: new FormData(), // empty body, just needs CSRF
+        });
+        const uploadId = startRes.data.upload_id;
+        const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
+        let uploaded = 0;
+        const t0 = Date.now();
+
+        // 2. Upload chunks
+        for (let i = 0; i < totalChunks; i++) {
+            const slice = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
             const fd = new FormData();
-            fd.append('file', fileList[i]);
-            try {
-                await api('files/upload', { method: 'POST', body: fd });
-                toast(`Uploaded: ${fileList[i].name}`, 'success');
-            } catch (err) {
-                toast(`Failed: ${fileList[i].name} – ${err.message}`, 'error');
-            }
+            fd.append('upload_id', uploadId);
+            fd.append('chunk_index', i);
+            fd.append('chunk', slice, file.name);
+
+            await api('chunked?action=upload', { method: 'POST', body: fd });
+
+            uploaded += slice.size;
+            const pct = Math.round(uploaded / file.size * 100);
+            const elapsed = (Date.now() - t0) / 1000;
+            const speed = uploaded / elapsed;
+            const rem = (file.size - uploaded) / speed;
+
+            row.setProgress(pct);
+            row.setStatus(`Chunk ${i + 1}/${totalChunks}`);
+            row.setDetail(`${formatSize(uploaded)} / ${formatSize(file.size)}  ${fmtSpeed(speed)}`);
+            row.setEta(fmtEta(rem));
         }
 
-        prog.classList.add('hidden');
+        // 3. Finish — compute sha256 in browser for integrity check
+        row.setStatus('Verifying…');
+        row.setDetail('');
+        row.setEta('');
+
+        // sha256 via SubtleCrypto (async, non-blocking)
+        const hash = await crypto.subtle.digest('SHA-256', await file.arrayBuffer());
+        const sha256 = Array.from(new Uint8Array(hash)).map(b => b.toString(16).padStart(2, '0')).join('');
+
+        const fd = new FormData();
+        fd.append('upload_id', uploadId);
+        fd.append('filename', file.name);
+        fd.append('total_chunks', totalChunks);
+        fd.append('sha256', sha256);
+
+        const res = await api('chunked?action=finish', { method: 'POST', body: fd });
+        return res;
+    }
+
+    async function uploadDirect(file, row) {
+        return new Promise((resolve, reject) => {
+            const xhr = new XMLHttpRequest();
+            xhr.open('POST', basePath + 'api/files/upload');
+            xhr.setRequestHeader('X-CSRF-Token', state.csrfToken);
+
+            const t0 = Date.now();
+            xhr.upload.onprogress = e => {
+                if (!e.lengthComputable) return;
+                const pct = Math.round(e.loaded / e.total * 100);
+                const elapsed = (Date.now() - t0) / 1000;
+                const speed = e.loaded / elapsed;
+                const rem = (e.total - e.loaded) / speed;
+                row.setProgress(pct);
+                row.setStatus(`${pct}%`);
+                row.setDetail(`${formatSize(e.loaded)} / ${formatSize(e.total)}  ${fmtSpeed(speed)}`);
+                row.setEta(fmtEta(rem));
+            };
+            xhr.onload = () => {
+                try {
+                    const data = JSON.parse(xhr.responseText);
+                    if (xhr.status >= 200 && xhr.status < 300) resolve(data);
+                    else reject(new Error(data.error || `HTTP ${xhr.status}`));
+                } catch { reject(new Error('Invalid server response')); }
+            };
+            xhr.onerror = () => reject(new Error('Network error'));
+
+            const fd = new FormData();
+            fd.append('file', file);
+            xhr.send(fd);
+        });
+    }
+
+    async function handleUpload(fileList) {
+        if (!fileList.length) return;
+        const results = [];
+
+        // Kick off all uploads concurrently (max 3 at a time)
+        const MAX_CONCURRENT = 3;
+        const queue = Array.from(fileList);
+        const active = new Set();
+
+        async function runNext() {
+            if (!queue.length) return;
+            const file = queue.shift();
+            const row = createFileRow(file);
+            const p = (file.size >= CHUNK_THRESHOLD ? uploadChunked : uploadDirect)(file, row)
+                .then(res => {
+                    const code = res.code || '';
+                    if (code === 'already_exists') {
+                        row.done(true, 'Already up-to-date');
+                        toast(`${file.name}: already up-to-date`, 'info');
+                    } else if (code === 'updated') {
+                        row.done(true, 'Updated ✓');
+                        toast(`Updated: ${file.name}`, 'success');
+                    } else {
+                        row.done(true, 'Uploaded ✓');
+                        toast(`Uploaded: ${file.name}`, 'success');
+                    }
+                    results.push({ file, ok: true });
+                })
+                .catch(err => {
+                    row.done(false, err.message);
+                    toast(`Failed: ${file.name} – ${err.message}`, 'error');
+                    results.push({ file, ok: false });
+                })
+                .finally(() => {
+                    active.delete(p);
+                    runNext();
+                });
+            active.add(p);
+        }
+
+        // Seed initial concurrent uploads
+        const seeds = Math.min(MAX_CONCURRENT, fileList.length);
+        for (let i = 0; i < seeds; i++) runNext();
+
+        // Wait for everything to finish
+        await new Promise(resolve => {
+            const check = setInterval(() => {
+                if (active.size === 0 && queue.length === 0) { clearInterval(check); resolve(); }
+            }, 200);
+        });
+
         loadFiles();
     }
 
