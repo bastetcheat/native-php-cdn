@@ -99,8 +99,48 @@ $endpoints[] = [
         ['code' => 400, 'reason' => 'No file / validation failed (size, type)'],
         ['code' => 401, 'reason' => 'Missing or invalid token'],
         ['code' => 403, 'reason' => 'Token lacks "upload" permission'],
+        ['code' => 409, 'reason' => 'File already exists with same content'],
     ],
 ];
+
+// 1b. Chunked Upload (for large files, Cloudflare bypass)
+$endpoints[] = [
+    'id' => 'chunked_upload',
+    'group' => 'Files',
+    'title' => 'Chunked upload (Cloudflare bypass)',
+    'method' => 'POST',
+    'path' => '/api/chunked',
+    'url' => $base . '/api/chunked',
+    'auth' => 'Bearer token – requires "upload" permission',
+    'notes' => 'Break large files (>100MB) into pieces to bypass Cloudflare limits. Call start → upload pieces → finish.',
+    'actions' => [
+        'start' => [
+            'url' => "$base/api/chunked?action=start",
+            'description' => 'Initialize session. Returns upload_id (UUID).',
+            'response' => ['success' => true, 'data' => ['upload_id' => 'uuid-123-456']]
+        ],
+        'upload' => [
+            'url' => "$base/api/chunked?action=upload",
+            'body_fields' => [
+                ['name' => 'upload_id', 'required' => true],
+                ['name' => 'chunk_index', 'required' => true],
+                ['name' => 'chunk', 'type' => 'file', 'required' => true]
+            ],
+            'description' => 'Upload bit by bit. Index is 0-based.'
+        ],
+        'finish' => [
+            'url' => "$base/api/chunked?action=finish",
+            'body_fields' => [
+                ['name' => 'upload_id', 'required' => true],
+                ['name' => 'filename', 'required' => true],
+                ['name' => 'total_chunks', 'required' => true],
+                ['name' => 'sha256', 'description' => 'Expected hash for server-side verification']
+            ],
+            'description' => 'Reassemble everything. Server validates and moves to uploads.'
+        ]
+    ]
+];
+
 
 // 2. Get file metadata (public)
 $endpoints[] = [
@@ -458,7 +498,17 @@ $agentPatterns = [
             "print(f'Total: {len(all_files)} files')",
         ]),
     ],
+    'large_file_upload' => [
+        'description' => 'Bypass Cloudflare 100MB limit by uploading in chunks.',
+        'steps' => [
+            '1. GET /api/chunked?action=start → get upload_id',
+            '2. For each 10MB chunk: POST /api/chunked?action=upload (send upload_id, chunk_index, chunk)',
+            '3. POST /api/chunked?action=finish (send upload_id, filename, total_chunks, sha256)',
+        ],
+        'python_snippet' => 'Check api/docs python examples for chunking logic.'
+    ],
     'self_discover_then_upload' => [
+
         'description' => 'The recommended first step for any AI agent connecting to this CDN.',
         'steps' => [
             '1. GET /api/docs  using your token → parse endpoint catalogue',

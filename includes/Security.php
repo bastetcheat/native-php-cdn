@@ -279,11 +279,10 @@ class Security
     /** Validate OAuth Bearer token, return user info or null */
     public static function validateBearerToken(PDO $db): ?array
     {
-        $authHeader = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
-        if (!preg_match('/^Bearer\s+(.+)$/i', $authHeader, $matches)) {
+        $rawToken = self::extractBearerToken();
+        if ($rawToken === null || $rawToken === '') {
             return null;
         }
-        $rawToken = $matches[1];
         $tokenHash = hash('sha256', $rawToken);
 
         $stmt = $db->prepare("SELECT t.*, u.username FROM oauth_tokens t JOIN users u ON t.created_by = u.id WHERE t.token_hash = ?");
@@ -307,6 +306,58 @@ class Security
             'token_id' => $token['id'],
             'permissions' => $token['permissions'],
         ];
+    }
+
+    /** Extract bearer token from common server/header locations across Apache/FPM/proxy setups. */
+    private static function extractBearerToken(): ?string
+    {
+        $candidates = [];
+
+        // Common server vars
+        $candidates[] = $_SERVER['HTTP_AUTHORIZATION'] ?? '';
+        $candidates[] = $_SERVER['REDIRECT_HTTP_AUTHORIZATION'] ?? '';
+        $candidates[] = $_SERVER['Authorization'] ?? '';
+
+        // PHP auth vars (when server maps Authorization automatically)
+        if (!empty($_SERVER['PHP_AUTH_USER']) && strcasecmp($_SERVER['PHP_AUTH_USER'], 'Bearer') === 0) {
+            $candidates[] = 'Bearer ' . ($_SERVER['PHP_AUTH_PW'] ?? '');
+        }
+
+        // getallheaders()/apache_request_headers fallback
+        if (function_exists('getallheaders')) {
+            $headers = getallheaders();
+            if (is_array($headers)) {
+                foreach ($headers as $k => $v) {
+                    if (strcasecmp((string) $k, 'Authorization') === 0) {
+                        $candidates[] = (string) $v;
+                    }
+                }
+            }
+        } elseif (function_exists('apache_request_headers')) {
+            $headers = apache_request_headers();
+            if (is_array($headers)) {
+                foreach ($headers as $k => $v) {
+                    if (strcasecmp((string) $k, 'Authorization') === 0) {
+                        $candidates[] = (string) $v;
+                    }
+                }
+            }
+        }
+
+        foreach ($candidates as $authHeader) {
+            $authHeader = trim((string) $authHeader);
+            if ($authHeader === '') {
+                continue;
+            }
+            if (preg_match('/^\s*Bearer\s+(.+)\s*$/i', $authHeader, $matches)) {
+                $token = trim((string) $matches[1]);
+                if ($token !== '') {
+                    return $token;
+                }
+            }
+        }
+
+        return null;
     }
 
     /** Get client IP safely */
