@@ -53,18 +53,38 @@ switch (true) {
                 exit;
             }
 
-            // Generate secure stored name
+            // Generate secure stored name (may be overridden for version update)
             $ext = strtolower(pathinfo($file['name'], PATHINFO_EXTENSION));
-            $storedName = Security::generateUUID() . ($ext ? '.' . $ext : '');
-
-            // Compute hash
             $hash = hash_file('sha256', $file['tmp_name']);
-
-            // Detect real MIME
             $finfo = new finfo(FILEINFO_MIME_TYPE);
             $mime = $finfo->file($file['tmp_name']);
 
-            // Move file
+            // ── Duplicate / version detection ────────────────────────────
+            $exStmt = $db->prepare(
+                "SELECT id, stored_name, sha256_hash, version FROM files WHERE original_name = ? LIMIT 1"
+            );
+            $exStmt->execute([$file['name']]);
+            $exRow = $exStmt->fetch();
+
+            if ($exRow && $exRow['sha256_hash'] === $hash) {
+                // Exact duplicate – discard temp file, return existing info
+                $uploaded[] = [
+                    'id' => (int) $exRow['id'],
+                    'original_name' => $file['name'],
+                    'sha256_hash' => $hash,
+                    'size' => $file['size'],
+                    'mime_type' => $mime,
+                    'extension' => $ext,
+                    'version' => (int) $exRow['version'],
+                    'status' => 'already_exists',
+                    'metadata_url' => '/files/metadata/' . urlencode($file['name']),
+                    'download_url' => '/files/download/' . urlencode($file['name']),
+                ];
+                continue; // skip move + insert
+            }
+
+            // Move to uploads
+            $storedName = Security::generateUUID() . ($ext ? '.' . $ext : '');
             $dest = $uploadsDir . '/' . $storedName;
             if (!move_uploaded_file($file['tmp_name'], $dest)) {
                 http_response_code(500);
@@ -72,30 +92,46 @@ switch (true) {
                 exit;
             }
 
-            // Insert into DB
-            $stmt = $db->prepare("INSERT INTO files (original_name, stored_name, mime_type, size, sha256_hash, extension, uploaded_by) VALUES (?, ?, ?, ?, ?, ?, ?)");
-            $stmt->execute([
-                $file['name'],
-                $storedName,
-                $mime,
-                $file['size'],
-                $hash,
-                $ext,
-                $user['id'],
-            ]);
+            if ($exRow) {
+                // Same name, different hash → version update
+                $oldPath = $uploadsDir . '/' . $exRow['stored_name'];
+                if (is_file($oldPath)) {
+                    @unlink($oldPath);
+                }
+                $newVersion = (int) $exRow['version'] + 1;
+                $db->prepare(
+                    "UPDATE files
+                     SET stored_name = ?, mime_type = ?, size = ?, sha256_hash = ?,
+                         extension = ?, uploaded_by = ?, version = ?, updated_at = datetime('now')
+                     WHERE id = ?"
+                )->execute([$storedName, $mime, $file['size'], $hash, $ext, $user['id'], $newVersion, (int) $exRow['id']]);
 
-            $fileId = $db->lastInsertId();
+                $fileId = (int) $exRow['id'];
+                $status = 'updated';
+            } else {
+                // New file
+                $newVersion = 1;
+                $db->prepare(
+                    "INSERT INTO files (original_name, stored_name, mime_type, size, sha256_hash, extension, uploaded_by)
+                     VALUES (?, ?, ?, ?, ?, ?, ?)"
+                )->execute([$file['name'], $storedName, $mime, $file['size'], $hash, $ext, $user['id']]);
+
+                $fileId = (int) $db->lastInsertId();
+                $status = 'created';
+            }
+
             $uploaded[] = [
-                'id' => (int) $fileId,
+                'id' => $fileId,
                 'original_name' => $file['name'],
                 'stored_name' => $storedName,
                 'mime_type' => $mime,
                 'size' => $file['size'],
                 'sha256_hash' => $hash,
                 'extension' => $ext,
-                'version' => 1,
-                'metadata_url' => '/files/metadata/' . $file['name'],
-                'download_url' => '/files/download/' . $file['name'],
+                'version' => $newVersion,
+                'status' => $status,
+                'metadata_url' => '/files/metadata/' . urlencode($file['name']),
+                'download_url' => '/files/download/' . urlencode($file['name']),
             ];
         }
 
