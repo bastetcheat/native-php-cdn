@@ -19,7 +19,7 @@ class Database
     private static ?PDO $instance = null;
 
     /** Current schema version – bump this when you add tables/columns */
-    private const SCHEMA_VERSION = 5;
+    private const SCHEMA_VERSION = 6;
 
     public static function getInstance(): PDO
     {
@@ -160,6 +160,9 @@ class Database
             $db->exec("CREATE INDEX IF NOT EXISTS idx_files_token_id ON files(token_id)");
         }
 
+        // ── Schema v6: uploads_path setting (no DDL needed, settings table already exists) ─
+        // Nothing to alter – the setting is just a row in the existing settings table.
+
         // Mark schema as up to date
         $db->exec('PRAGMA user_version = ' . self::SCHEMA_VERSION);
 
@@ -193,6 +196,27 @@ class Database
              ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at"
         );
         $stmt->execute([$key, $value]);
+    }
+
+    /**
+     * Get the absolute path to the uploads directory.
+     * Returns the admin-configured path when set, or the default ./uploads folder.
+     * Always normalises trailing slash away and ensures the directory exists.
+     */
+    public static function getUploadsDir(): string
+    {
+        $configured = trim(self::getSetting('uploads_path', ''));
+
+        if ($configured !== '' && is_dir($configured)) {
+            return rtrim($configured, '\//');
+        }
+
+        // Default: <project_root>/uploads (this file lives in includes/)
+        $default = dirname(__DIR__) . DIRECTORY_SEPARATOR . 'uploads';
+        if (!is_dir($default)) {
+            mkdir($default, 0700, true);
+        }
+        return $default;
     }
 
     /**

@@ -29,10 +29,7 @@ if (!in_array('upload', $perms, true)) {
     respondError(403, 'Token does not have upload permission');
 }
 
-$uploadsDir = __DIR__ . '/../uploads';
-if (!is_dir($uploadsDir) && !mkdir($uploadsDir, 0700, true) && !is_dir($uploadsDir)) {
-    respondError(500, 'Failed to initialize uploads directory');
-}
+$uploadsDir = Database::getUploadsDir();
 
 $isChunked = isset($_POST['chunked']) && (string) $_POST['chunked'] === '1';
 if ($isChunked) {

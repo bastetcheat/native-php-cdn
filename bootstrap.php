@@ -37,11 +37,8 @@ if (session_status() === PHP_SESSION_NONE) {
 require_once __DIR__ . '/includes/Database.php';
 require_once __DIR__ . '/includes/Security.php';
 
-// Ensure uploads directory exists (fast fs check)
-$uploadsDir = __DIR__ . '/uploads';
-if (!is_dir($uploadsDir)) {
-    mkdir($uploadsDir, 0700, true);
-}
+// Ensure uploads directory exists – uses configured path if set, else ./uploads
+Database::getUploadsDir(); // auto-creates if missing
 
 // Run migrations – internally skips everything if schema is current.
 // Cost on warm runs: one PRAGMA user_version read (microseconds).

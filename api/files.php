@@ -12,7 +12,7 @@ if ($method !== 'GET') {
     Security::requireCsrf();
 }
 
-$uploadsDir = __DIR__ . '/../uploads';
+$uploadsDir = Database::getUploadsDir();
 
 switch (true) {
     // ─── Upload file(s) ───

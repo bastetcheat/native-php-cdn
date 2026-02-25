@@ -125,9 +125,10 @@ switch ($action) {
             exit;
         }
 
+        $uploadsDir = Database::getUploadsDir();
         $ext = strtolower(pathinfo($filename, PATHINFO_EXTENSION));
         $storeName = Security::generateUUID() . ($ext ? '.' . $ext : '');
-        $finalPath = __DIR__ . '/../uploads/' . $storeName;
+        $finalPath = $uploadsDir . DIRECTORY_SEPARATOR . $storeName;
 
         // Merge all chunks in order
         $out = fopen($finalPath, 'wb');
@@ -197,7 +198,7 @@ switch ($action) {
             }
 
             // Same name, different hash → version update
-            $oldPath = __DIR__ . '/../uploads/' . $exRow['stored_name'];
+            $oldPath = $uploadsDir . DIRECTORY_SEPARATOR . $exRow['stored_name'];
             if (is_file($oldPath))
                 @unlink($oldPath);
 

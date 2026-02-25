@@ -38,8 +38,8 @@ if (!$file) {
     exit;
 }
 
-$uploadsDir = __DIR__ . '/uploads';
-$filePath = $uploadsDir . '/' . $file['stored_name'];
+$uploadsDir = Database::getUploadsDir();
+$filePath = $uploadsDir . DIRECTORY_SEPARATOR . $file['stored_name'];
 
 switch ($action) {
     case 'metadata':

@@ -1216,6 +1216,58 @@
                     </h3>
                     <p class="text-sm text-slate-500 mt-2">User ID: ${state.user?.id} &nbsp;|&nbsp; Session active since login</p>
                 </div>
+
+                <!-- Uploads Storage Path -->
+                <div class="glass glass-hover p-6 space-y-4 animate-slide-up md:col-span-2">
+                    <div class="flex items-center gap-3 mb-2">
+                        <div class="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                            <i data-lucide="folder-open" class="w-5 h-5 text-amber-400"></i>
+                        </div>
+                        <div>
+                            <h3 class="text-lg font-semibold">Uploads Storage Path</h3>
+                            <p class="text-xs text-slate-500 mt-0.5">Redirect uploads to any folder &mdash; useful when XAMPP is on a small drive</p>
+                        </div>
+                    </div>
+
+                    <!-- Current status info (loaded async) -->
+                    <div id="upath-info" class="bg-slate-800/50 rounded-lg px-4 py-3 text-sm font-mono text-slate-400">
+                        <span class="spinner inline-block w-3 h-3 mr-2"></span> Loading&hellip;
+                    </div>
+
+                    <!-- Path selector -->
+                    <div class="space-y-3">
+                        <label class="block text-sm text-slate-400">Storage location</label>
+                        <div class="flex gap-3">
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="radio" name="upath-mode" id="upath-default" value="default" class="accent-indigo-500" checked>
+                                Default <code class="text-slate-400 text-xs ml-1">./uploads</code>
+                            </label>
+                            <label class="flex items-center gap-2 text-sm cursor-pointer">
+                                <input type="radio" name="upath-mode" id="upath-custom" value="custom" class="accent-indigo-500">
+                                Custom absolute path
+                            </label>
+                        </div>
+                        <div id="upath-custom-row" class="hidden">
+                            <input id="upath-input" class="input font-mono" placeholder="e.g. C:\\cdn-uploads  or  /var/cdn-uploads">
+                            <p class="text-xs text-slate-600 mt-1">The folder will be created automatically if it does not exist.</p>
+                        </div>
+                        <label class="flex items-center gap-2 text-sm cursor-pointer select-none">
+                            <input type="checkbox" id="upath-move" class="accent-amber-500 w-4 h-4">
+                            Move existing files to the new location
+                            <span class="text-xs text-slate-600">(recommended – files stay accessible)</span>
+                        </label>
+                    </div>
+
+                    <div class="flex gap-2">
+                        <button id="upath-save" class="btn btn-primary flex-1 justify-center">
+                            <i data-lucide="save" class="w-4 h-4"></i> Apply Path
+                        </button>
+                        <button id="upath-revert" class="btn btn-ghost justify-center" data-tooltip="Clear custom path and revert to ./uploads">
+                            <i data-lucide="rotate-ccw" class="w-4 h-4"></i> Revert to Default
+                        </button>
+                    </div>
+                    <div id="upath-result" class="hidden text-xs rounded-lg p-3 font-mono break-all"></div>
+                </div>
             </div>
         `);
 
@@ -1279,12 +1331,12 @@
             try {
                 const res = await api('settings/restart-apache', { method: 'POST' });
                 result.className = 'text-xs rounded-lg p-3 font-mono break-all bg-emerald-500/10 text-emerald-300';
-                result.textContent = '✓ ' + res.data.message + (res.data.output ? '\n' + res.data.output : '');
+                result.textContent = '\u2713 ' + res.data.message + (res.data.output ? '\n' + res.data.output : '');
                 result.classList.remove('hidden');
                 toast('Apache restarted!', 'success');
             } catch (err) {
                 result.className = 'text-xs rounded-lg p-3 font-mono break-all bg-red-500/10 text-red-300';
-                result.textContent = '✗ ' + err.message
+                result.textContent = '\u2717 ' + err.message
                     + (err.hint ? '\n\nHint: ' + err.hint : '')
                     + (err.output ? '\n\nOutput:\n' + err.output : '');
                 result.classList.remove('hidden');
@@ -1296,6 +1348,66 @@
                 lucide.createIcons({ attrs: { class: 'w-4 h-4' }, nameAttr: 'data-lucide' });
             }
         });
+
+        // ── Uploads path card ────────────────────────────────────────────────
+        function loadUploadPath() {
+            api('settings/uploads-path').then(res => {
+                const d = res.data;
+                const el = document.getElementById('upath-info');
+                if (!el) return;
+                el.innerHTML = `
+                    <span class="text-slate-300">${esc(d.current_path)}</span>
+                    <span class="text-slate-600 ml-3">${d.file_count} file(s) &middot; ${esc(d.total_size_human)}</span>
+                    ${d.is_custom ? '<span class="ml-3 text-amber-400 text-xs">[custom]</span>' : ''}`;
+
+                // Pre-select the right radio
+                const customRadio = document.getElementById('upath-custom');
+                if (d.is_custom && customRadio) {
+                    customRadio.checked = true;
+                    document.getElementById('upath-custom-row').classList.remove('hidden');
+                    document.getElementById('upath-input').value = d.configured_path;
+                }
+            }).catch(() => {
+                const el = document.getElementById('upath-info');
+                if (el) el.textContent = 'Could not load path info.';
+            });
+        }
+        loadUploadPath();
+
+        // Toggle custom input visibility
+        document.querySelectorAll('input[name="upath-mode"]').forEach(r => {
+            r.addEventListener('change', () => {
+                const show = document.getElementById('upath-custom').checked;
+                document.getElementById('upath-custom-row').classList.toggle('hidden', !show);
+            });
+        });
+
+        async function applyUploadPath(revert) {
+            const result = document.getElementById('upath-result');
+            const path = revert ? '' : (document.getElementById('upath-custom').checked
+                ? document.getElementById('upath-input').value.trim() : '');
+            const move = document.getElementById('upath-move').checked;
+            try {
+                const res = await api('settings/uploads-path', {
+                    method: 'PUT',
+                    body: { path, move_files: move },
+                });
+                result.className = 'text-xs rounded-lg p-3 font-mono break-all bg-emerald-500/10 text-emerald-300';
+                result.textContent = '\u2713 ' + res.data.message
+                    + (res.data.move_errors.length ? '\n\u26a0 Errors: ' + res.data.move_errors.join(', ') : '');
+                result.classList.remove('hidden');
+                toast(res.data.message, 'success');
+                loadUploadPath(); // refresh info bar
+            } catch (err) {
+                result.className = 'text-xs rounded-lg p-3 font-mono break-all bg-red-500/10 text-red-300';
+                result.textContent = '\u2717 ' + err.message;
+                result.classList.remove('hidden');
+                toast(err.message, 'error');
+            }
+        }
+
+        document.getElementById('upath-save').addEventListener('click', () => applyUploadPath(false));
+        document.getElementById('upath-revert').addEventListener('click', () => applyUploadPath(true));
     }
 
     // ════════════════════════════════════

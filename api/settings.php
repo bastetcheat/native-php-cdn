@@ -232,6 +232,103 @@ switch ($action) {
         }
         break;
 
+    case 'uploads-path':
+        if ($method === 'GET') {
+            $configured = Database::getSetting('uploads_path', '');
+            $current = Database::getUploadsDir();
+            $size = 0;
+            $count = 0;
+            foreach (new DirectoryIterator($current) as $f) {
+                if ($f->isFile()) {
+                    $size += $f->getSize();
+                    $count++;
+                }
+            }
+            echo json_encode([
+                'success' => true,
+                'data' => [
+                    'current_path' => $current,
+                    'configured_path' => $configured,
+                    'is_custom' => $configured !== '',
+                    'file_count' => $count,
+                    'total_size' => $size,
+                    'total_size_human' => number_format($size / 1048576, 2) . ' MB',
+                ]
+            ]);
+            break;
+        }
+
+        if ($method !== 'PUT') {
+            http_response_code(405);
+            echo json_encode(['success' => false, 'error' => 'Method not allowed']);
+            break;
+        }
+
+        $input = json_decode(file_get_contents('php://input'), true);
+        $newPath = trim($input['path'] ?? '');
+        $move = !empty($input['move_files']);
+
+        // Empty string = revert to default ./uploads
+        if ($newPath !== '') {
+            // Normalize: trim trailing slashes
+            $newPath = rtrim($newPath, '/\\');
+            // Validate: must be an absolute path
+            if (!preg_match('/^([A-Za-z]:[\\\\\/]|\/)/u', $newPath)) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => 'Path must be absolute (e.g. C:\\cdn-uploads or /var/cdn-uploads)']);
+                break;
+            }
+            // Try to create if not existing
+            if (!is_dir($newPath) && !mkdir($newPath, 0755, true)) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => "Directory does not exist and could not be created: $newPath"]);
+                break;
+            }
+            // Writable?
+            if (!is_writable($newPath)) {
+                http_response_code(400);
+                echo json_encode(['success' => false, 'error' => "Directory is not writable: $newPath"]);
+                break;
+            }
+        }
+
+        $oldDir = Database::getUploadsDir();
+        $newDir = ($newPath !== '') ? $newPath : dirname(__DIR__) . DIRECTORY_SEPARATOR . 'uploads';
+        $moved = 0;
+        $errors = [];
+
+        if ($move && realpath($oldDir) !== realpath($newDir)) {
+            // Move every file in the old directory to the new one
+            foreach (new DirectoryIterator($oldDir) as $f) {
+                if (!$f->isFile() || str_starts_with($f->getFilename(), '.'))
+                    continue;
+                $src = $f->getPathname();
+                $dst = $newDir . DIRECTORY_SEPARATOR . $f->getFilename();
+                if (rename($src, $dst)) {
+                    $moved++;
+                } else {
+                    $errors[] = $f->getFilename();
+                }
+            }
+        }
+
+        // Save setting (empty string = use default)
+        Database::setSetting('uploads_path', $newPath);
+
+        echo json_encode([
+            'success' => true,
+            'data' => [
+                'new_path' => $newDir,
+                'is_custom' => $newPath !== '',
+                'files_moved' => $moved,
+                'move_errors' => $errors,
+                'message' => $newPath === ''
+                    ? 'Reverted to default uploads folder.'
+                    : "Uploads path set to: $newPath" . ($move ? " ($moved file(s) moved)" : ''),
+            ]
+        ]);
+        break;
+
     default:
         http_response_code(404);
         echo json_encode(['success' => false, 'error' => 'Settings endpoint not found']);
